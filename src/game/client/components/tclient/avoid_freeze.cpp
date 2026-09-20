@@ -347,10 +347,38 @@ void CAvoidFreeze::ApplyOverride()
 	vec2 aAimTargets[145];
 	int AimCount = 1;
 	aAimTargets[0] = vec2((float)Current.m_TargetX, (float)Current.m_TargetY);
-	// A held physical hook belongs to the player. Searching alternative angles here made the solver
-	// choose a ceiling/wall hook and later overwrite the packet aim, even though the player was aiming
-	// directly at another tee. Avoid may still release a harmful manual hook, but it never redirects it.
-	if(AllowAim && !HookKeyHeld)
+	// The cursor is the player's intent. While it points at another tee (inside hook range and the
+	// aim cone) the player is lining up a manual hook on them. Searching alternative angles here made
+	// the solver throw avoid's own hook at a ceiling/wall instead, reported as "avoid hooks the
+	// ceiling while I aim at the tee under the platform". In that case only the cursor direction is
+	// used: avoid may still throw its rescue hook there or escape with movement, but it never picks a
+	// different throw direction while the player is aiming at someone.
+	bool AimingAtPlayer = false;
+	{
+		const vec2 AimVec((float)Current.m_TargetX, (float)Current.m_TargetY);
+		const float AimVecLen = length(AimVec);
+		if(AimVecLen > 0.001f)
+		{
+			const vec2 AimDir = AimVec / AimVecLen;
+			const float MaxAngle = maximum((float)g_Config.m_TcHookAimAngle, 12.0f) * (pi / 180.0f);
+			const float MaxHookDist = pGame->m_aTuning[g_Config.m_ClDummy].m_HookLength * 1.25f;
+			const vec2 LocalPos = pGame->m_PredictedChar.m_Pos;
+			for(int i = 0; i < MAX_CLIENTS && !AimingAtPlayer; i++)
+			{
+				if(i == LocalId || !pGame->m_Snap.m_aCharacters[i].m_Active)
+					continue;
+				const vec2 ToPlayer = pGame->m_aClients[i].m_RenderPos - LocalPos;
+				const float Dist = length(ToPlayer);
+				if(Dist < 1.0f || Dist > MaxHookDist)
+					continue;
+				if(acosf(std::clamp(dot(AimDir, ToPlayer / Dist), -1.0f, 1.0f)) <= MaxAngle)
+					AimingAtPlayer = true;
+			}
+		}
+	}
+	// A held physical hook belongs to the player, and so does a hook being aimed at a tee. Avoid may
+	// still release a harmful manual hook, but it never redirects it.
+	if(AllowAim && !HookKeyHeld && !AimingAtPlayer)
 	{
 		int NumAngles = g_Config.m_KxBafAngles;
 		if(NumAngles < 1)
