@@ -425,9 +425,14 @@ void CAvoidFreeze::ApplyOverride()
 			m_BlockHeldHookUntilRelease = true;
 
 		// Apply aim: silent (only patched into the sent packet by CControls)
-		// or visible (move the local mouse/input as well). Never while the player is holding the hook
-		// key: the aim at that moment is the hook throw direction, and moving it makes hooks miss.
-		if(AllowAim && pGame->m_Controls.m_aInputHook[g_Config.m_ClDummy] == 0 &&
+		// or visible (move the local mouse/input as well). While the player is holding the hook key the
+		// aim is usually THEIR hook throw direction and moving it would make their hooks miss — but when
+		// the escape combo throws a hook ITSELF, the aim has to be the simulated one: otherwise the game
+		// throws at the player's cursor, the hook grabs a different spot (or nothing at all) and the
+		// rescue the simulation promised never happens. That is why falling into freeze "just wasn't
+		// saved" for hook-holding players: every simulated hook rescue was fiction.
+		const bool ThrowOwnHook = BestInput.m_Hook != 0;
+		if(AllowAim && (pGame->m_Controls.m_aInputHook[g_Config.m_ClDummy] == 0 || ThrowOwnHook) &&
 			(BestInput.m_TargetX != Current.m_TargetX || BestInput.m_TargetY != Current.m_TargetY))
 		{
 			const vec2 AimTarget((float)BestInput.m_TargetX, (float)BestInput.m_TargetY);
@@ -435,6 +440,14 @@ void CAvoidFreeze::ApplyOverride()
 			{
 				pGame->m_Controls.m_AvoidAimActive = true;
 				pGame->m_Controls.m_AvoidAimTarget = AimTarget;
+				// The hook avoid throws must aim the same way locally, or the client predicts a
+				// different hook than the server gets and every later decision runs on a world that
+				// never existed.
+				if(ThrowOwnHook)
+				{
+					pInput->m_TargetX = BestInput.m_TargetX;
+					pInput->m_TargetY = BestInput.m_TargetY;
+				}
 			}
 			else
 			{
