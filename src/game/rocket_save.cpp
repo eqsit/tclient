@@ -102,12 +102,14 @@ static vec2 BlastForce(vec2 TeePos, vec2 Blast, const CRocketSaveCfg &Cfg)
 // last-moment shots as saves even though the grenade landed after the freeze. Higher is better: a run
 // that never touches freeze scores by how much room it keeps around it, a run that freezes scores by how
 // long it lasted.
-static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks, vec2 Blast, float BlastTime)
+static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks, vec2 Blast, float BlastTime, float *pOutKick = nullptr)
 {
 	Core.Init(nullptr, pCollision);
 	Core.SetHookedPlayer(-1);
 	const int BlastTick = std::clamp(round_to_int(BlastTime / TICK_SECONDS), 0, Ticks);
 	float Worst = 1e9f;
+	if(pOutKick)
+		*pOutKick = 0.0f;
 	for(int i = 0; i < Ticks; ++i)
 	{
 		if(i == BlastTick)
@@ -117,7 +119,10 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 			// moving up/down/left/right). Adding it raw here made the simulation believe in kicks the
 			// game silently zeroes — that is how shots "saving for 40 ticks" ended in a freeze 4 ticks
 			// later next to directional freeze tiles.
+			const vec2 VelBefore = Core.m_Vel;
 			Core.m_Vel = ClampVel(Core.MoveRestrictions(), Core.m_Vel + BlastForce(Core.m_Pos, Blast, Cfg));
+			if(pOutKick)
+				*pOutKick = length(Core.m_Vel - VelBefore);
 		}
 		Core.m_Input = Input;
 		const vec2 Prev = Core.m_Pos;
@@ -186,19 +191,18 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			*pOutTicks = 0.0f;
 		if(!HitSolid)
 			return 0.0f;
-		// Same clamp as the real explosion (see Outcome): the kick that matters is the one that survives
-		// the move restrictions at the tee.
-		const vec2 Force = BlastForce(Sim.m_Pos, Blast, Cfg);
-		const float Kick = length(ClampVel(Sim.MoveRestrictions(), Sim.m_Vel + Force) - Sim.m_Vel);
-		if(pOutKick)
-			*pOutKick = Kick;
 		if(pOutTicks)
 			*pOutTicks = BlastTime / TICK_SECONDS;
+		// Measure the kick where the tee actually is when the projectile arrives. Using the fire-time
+		// position here rejected shots the tee was moving into and accepted shots it had already moved
+		// away from. Outcome also applies the current move restrictions at that future tick.
+		float Kick = 0.0f;
+		const float Score = Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Blast, BlastTime, &Kick);
+		if(pOutKick)
+			*pOutKick = Kick;
 		if(Kick < ROCKET_MIN_KICK)
 			return 0.0f;
-		// The outcome runs with the real delay before the blast appears, so a shot whose grenade lands
-		// after the danger no longer scores as a save.
-		return Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Blast, BlastTime);
+		return Score;
 	};
 
 	// What the plain "shoot at the danger" aim would achieve, as the baseline to beat.

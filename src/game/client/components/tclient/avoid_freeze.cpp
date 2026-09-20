@@ -14,7 +14,7 @@
 //   If both fail → too late, danger inevitable.
 //
 // Combos include: direction(-1,0,1) × jump(0,1) × hook(0,1) × aim angles.
-// Aim angles are centered on current aim, spread evenly over the FOV.
+// Aim angles start at the current aim, then spread outward in nearest-angle-first order over the FOV.
 
 #include <game/client/components/tclient/avoid_freeze.h>
 
@@ -68,9 +68,12 @@ int CAvoidFreeze::SimulateDangerTickDelayed(int LocalId, const CNetObj_PlayerInp
 {
 	CGameClient *pGame = GameClient();
 	CGameWorld SimWorld;
-	// Only our own tee is simulated: the world used to copy every character and delete the rest again,
-	// which is pure heap churn on a populated server.
-	SimWorld.CopyWorld(&pGame->m_PredictedWorld, LocalId);
+	// A released hook cannot interact with players, so the cheap local-only copy is exact for that
+	// branch. An active or candidate hook must see the other tees: dropping them made an existing
+	// player-hook retract in the simulation and made auto-hook aim at places that were not the real
+	// world. Only pay for the full character copy in hook branches.
+	const bool SimulatesHook = DelayInput.m_Hook != 0 || ComboInput.m_Hook != 0;
+	SimWorld.CopyWorld(&pGame->m_PredictedWorld, SimulatesHook ? -1 : LocalId);
 
 	CCharacter *pChar = SimWorld.GetCharacterById(LocalId);
 	if(!pChar)
@@ -215,6 +218,7 @@ void CAvoidFreeze::ApplyOverride()
 		const int DelayedDanger = SimulateDangerTickDelayed(LocalId, Current, 1, NoHook, SimTicks);
 		if(DelayedDanger == 0)
 		{
+			m_SavedThisTick = true;
 			LogDecision(1, "wait: keeping the hook is safe for one more tick", DelayedDanger, nullptr, 0);
 			return; // hook is safe for now, don't intervene yet
 		}
@@ -222,6 +226,7 @@ void CAvoidFreeze::ApplyOverride()
 		// Can't wait — release hook NOW.
 		LogDecision(3, "RELEASE hook: it is dragging us into danger", DangerWithoutHook, nullptr, 0);
 		pInput->m_Hook = 0;
+		m_SavedThisTick = true;
 		m_WasOverriding = true;
 		m_OverrideHook = 0;
 		m_BlockHeldHookUntilRelease = HookKeyHeld;
@@ -276,7 +281,9 @@ void CAvoidFreeze::ApplyOverride()
 		aHooks[0] = Current.m_Hook != 0 ? 1 : 0;
 	}
 
-	// Aim angles: centered on current aim, spread within the FOV cone.
+	// Aim angles: current cursor first, then expand symmetrically out through the FOV. The previous
+	// edge-to-edge order combined with the early exit below selected the far left edge as soon as it
+	// survived, even when a direction next to the cursor was equally safe.
 	vec2 aAimTargets[145];
 	int AimCount = 1;
 	aAimTargets[0] = vec2((float)Current.m_TargetX, (float)Current.m_TargetY);
@@ -294,13 +301,18 @@ void CAvoidFreeze::ApplyOverride()
 		if(AimDist < 1.0f)
 			AimDist = 100.0f;
 
-		AimCount = 0;
-		for(int a = 0; a < NumAngles; a++)
+		AimCount = 1;
+		const int Levels = maximum(1, NumAngles / 2);
+		for(int Level = 1; AimCount < NumAngles; Level++)
 		{
-			const float t = (NumAngles == 1) ? 0.0f : (float)a / (float)(NumAngles - 1) - 0.5f;
-			const float Angle = CurAngle + t * FovRad;
-			aAimTargets[AimCount] = vec2(cosf(Angle) * AimDist, sinf(Angle) * AimDist);
-			AimCount++;
+			const float Offset = (float)Level / (float)Levels * FovRad * 0.5f;
+			for(const float Sign : {1.0f, -1.0f})
+			{
+				if(AimCount >= NumAngles)
+					break;
+				const float Angle = CurAngle + Sign * Offset;
+				aAimTargets[AimCount++] = vec2(cosf(Angle) * AimDist, sinf(Angle) * AimDist);
+			}
 		}
 	}
 
@@ -350,6 +362,7 @@ void CAvoidFreeze::ApplyOverride()
 
 	if(CanWait)
 	{
+		m_SavedThisTick = true;
 		LogDecision(1, "wait: an escape input survives after one more tick", DangerWithoutHook, nullptr, 0);
 		return;
 	}

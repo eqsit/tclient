@@ -30,9 +30,9 @@ public:
 	// Called from CControls::SnapInput before the other safety features so they can
 	// see whether avoid already found a way out for this tick.
 	void ApplyOverride();
-	// True when this tick's evaluation found a way to survive on its own: either the
-	// situation is safe, waiting one more tick works, or a fully-surviving input was
-	// applied. The rocket counter stays silent while this is true.
+	// True when this tick's evaluation has the danger under control: waiting one more tick
+	// is proven safe, releasing the harmful hook is sufficient, or a fully-surviving input
+	// was applied. The rocket counter stays silent while this is true.
 	bool WouldSave() const { return m_SavedThisTick; }
 
 private:

@@ -44,6 +44,7 @@ public:
 	// long as it is dangerous without the forced 0 sticking forever: the next tick starts from the real
 	// held key again, so the instant hooking is safe the player's still-held hook simply resumes.
 	int m_aInputHook[NUM_DUMMIES];
+	bool m_aInputFirePressed[NUM_DUMMIES] = {false, false}; // physical +fire state, separate from the counter an automatic shot changes
 	int m_aShowHookColl[NUM_DUMMIES];
 
 	// TClient
@@ -56,6 +57,7 @@ public:
 	bool AvoidHardDeathPoint(float x, float y) const; // is this point a kill tile or off-map (the hitbox-corner death test, freeze excluded)
 	int AvoidDangerClass(float x, float y, bool ForceFreezeRecoverable = false) const; // same but for the whole tee body at (x,y): centre + 4 hitbox corners, worst wins
 	void ApplyAntiVoidRocket(bool Suppressed = false); // rocket (grenade) counter. Suppressed: do upkeep (release fire, tick cooldown) but don't arm/fire
+	void CancelAntiVoidRocket(int Dummy, bool ReleaseFire = true); // relinquish fire/weapon ownership when disabled, reset, or dead
 	static constexpr int MAX_LASER_BOUNCES = 12;
 	void ApplyAntiVoidLaser(bool Suppressed = false); // laser self-ricochet counter; runs independently of the rocket
 	int TraceLaserPath(vec2 From, vec2 AimDir, int MaxBounces, vec2 *pSegStart, vec2 *pSegEnd) const;

@@ -36,6 +36,8 @@ void CControls::OnReset()
 {
 	ResetInput(0);
 	ResetInput(1);
+	CancelAntiVoidRocket(0, false);
+	CancelAntiVoidRocket(1, false);
 
 	for(int &AmmoCount : m_aAmmoCount)
 		AmmoCount = 0;
@@ -56,6 +58,7 @@ void CControls::ResetInput(int Dummy)
 	m_aInputDirectionLeft[Dummy] = 0;
 	m_aInputDirectionRight[Dummy] = 0;
 	m_aInputHook[Dummy] = 0;
+	m_aInputFirePressed[Dummy] = false;
 }
 
 void CControls::OnPlayerDeath()
@@ -69,11 +72,9 @@ void CControls::OnPlayerDeath()
 
 	for(int &AmmoCount : m_aAmmoCount)
 		AmmoCount = 0;
-	// Drop any pending rocket-save / laser-save weapon restore so we don't switch weapons right after respawning.
-	for(int &PrevWeapon : m_aAntiVoidRocketPrevWeapon)
-		PrevWeapon = -1;
-	for(bool &ManualWeapon : m_aAntiVoidRocketManualWeapon)
-		ManualWeapon = false;
+	// Drop all rocket ownership so neither a held auto-fire press nor a weapon restore crosses respawn.
+	CancelAntiVoidRocket(0);
+	CancelAntiVoidRocket(1);
 	for(int &PrevWeapon : m_aAntiVoidLaserPrevWeapon)
 		PrevWeapon = -1;
 	for(bool &Pending : m_aAntiVoidLaserReleasePending)
@@ -104,6 +105,8 @@ void CControls::ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData)
 		return;
 
 	int *pVariable = pState->m_apVariables[g_Config.m_ClDummy];
+	if(pVariable == &pState->m_pControls->m_aInputData[g_Config.m_ClDummy].m_Fire)
+		pState->m_pControls->m_aInputFirePressed[g_Config.m_ClDummy] = pResult->GetInteger(0) != 0;
 	if(((*pVariable) & 1) != pResult->GetInteger(0))
 		(*pVariable)++;
 	*pVariable &= INPUT_STATE_MASK;
@@ -621,6 +624,12 @@ vec2 CControls::LocalCharPos() const
 // while paused/spectating — as long as our tee is still on the map. With no local tee it does nothing.
 void CControls::ApplyAutoSafety()
 {
+	const int Dummy = g_Config.m_ClDummy;
+	// Disabling the feature must still release a press it generated and discard its saved weapon.
+	// Previously the entire function stopped being called, leaving full-auto fire held indefinitely.
+	if(!g_Config.m_TcAntiVoidRocket)
+		CancelAntiVoidRocket(Dummy);
+
 	// We need a local tee to act on. With no character at all (true spectator) the features simply no-op.
 	if(!HaveLocalChar())
 		return;
@@ -652,6 +661,8 @@ void CControls::ApplyAutoSafety()
 
 	if(Frozen)
 	{
+		if(g_Config.m_TcAntiVoidRocket)
+			ApplyAntiVoidRocket(true);
 		ApplyAntiVoidLaser(true);
 		return;
 	}
@@ -676,6 +687,19 @@ void CControls::ApplyAutoSafety()
 	// Hole assist runs last so that, while you deliberately engage it, it wins the horizontal direction.
 	if(g_Config.m_TcHoleAssist && HoleAssistActive())
 		ApplyHoleAssist();
+}
+
+void CControls::CancelAntiVoidRocket(int Dummy, bool ReleaseFire)
+{
+	if(ReleaseFire && !m_aInputFirePressed[Dummy] && m_aAntiVoidRocketReleasePending[Dummy] &&
+		(m_aInputData[Dummy].m_Fire & 1) != 0 &&
+		m_aInputData[Dummy].m_Fire == m_aAntiVoidRocketFireValue[Dummy])
+		m_aInputData[Dummy].m_Fire++;
+	m_aAntiVoidRocketReleasePending[Dummy] = false;
+	m_aAntiVoidRocketFireValue[Dummy] = 0;
+	m_aAntiVoidRocketCooldown[Dummy] = 0;
+	m_aAntiVoidRocketPrevWeapon[Dummy] = -1;
+	m_aAntiVoidRocketManualWeapon[Dummy] = false;
 }
 
 // TClient hole assist: is it engaged right now? Hold mode follows the key; toggle mode follows the latch.
@@ -995,7 +1019,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	if(m_aAntiVoidRocketReleasePending[Dummy])
 	{
 		m_aAntiVoidRocketReleasePending[Dummy] = false;
-		if((m_aInputData[Dummy].m_Fire & 1) != 0 && m_aInputData[Dummy].m_Fire == m_aAntiVoidRocketFireValue[Dummy])
+		if(!m_aInputFirePressed[Dummy] && (m_aInputData[Dummy].m_Fire & 1) != 0 && m_aInputData[Dummy].m_Fire == m_aAntiVoidRocketFireValue[Dummy])
 			m_aInputData[Dummy].m_Fire++;
 	}
 
@@ -1067,6 +1091,12 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// the grenade is ready and BestAim has a valid detonation, even if the rocket's own path prediction
 	// does not see the danger (avoid's model and the core simulation sometimes disagree).
 	const bool AvoidNoSolution = GameClient()->m_AvoidFreeze.NoSolution();
+	// The lightweight rocket core has no moving player world. A hook already attached to a tee, or one
+	// still flying and able to attach, therefore has an untrustworthy trajectory here; let the full-world
+	// avoid own that situation instead of firing from a fictitious detached-hook path. If avoid releases
+	// the hook in the outgoing input, the rocket may act normally on that released path.
+	const bool HookNeedsPlayerWorld = m_aInputData[Dummy].m_Hook != 0 &&
+		(GameClient()->m_PredictedChar.HookedPlayer() >= 0 || GameClient()->m_PredictedChar.m_HookState == HOOK_FLYING);
 
 	// avoid may see the danger while our own core prediction does not (different models). Merge its
 	// tick into the time gates; the distance gates still use our own path.
@@ -1093,7 +1123,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// grenade). A freeze with nothing solid around it would just swallow the grenade, so the weapon
 	// is not even taken in that case. BestAim does the precise check at fire time.
 	bool SolidWithinBlast = false;
-	for(int i = 0; DangerInArm && i < 16 && !SolidWithinBlast; i++)
+	for(int i = 0; DangerInArm && !HookNeedsPlayerWorld && i < 16 && !SolidWithinBlast; i++)
 	{
 		const vec2 Dir = direction((float)i / 16.0f * 2.0f * pi);
 		vec2 Hit;
@@ -1101,7 +1131,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			SolidWithinBlast = true;
 	}
 
-	const bool NeedRocket = DangerInArm && SolidWithinBlast && !AvoidSaves;
+	const bool NeedRocket = DangerInArm && SolidWithinBlast && !AvoidSaves && !HookNeedsPlayerWorld;
 
 	// Use the PREDICTED active weapon (updates in ~1 tick, no ping wait) to know when the grenade is really in hand.
 	const bool GrenadeReady = GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_GRENADE;
@@ -1146,7 +1176,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 
 	if(DangerInArm)
 	{
-		if(AvoidSaves)
+		if(HookNeedsPlayerWorld)
+			LogRocket(9, "suppressed: player-interactive hook is owned by avoid");
+		else if(AvoidSaves)
 			LogRocket(1, "suppressed: avoid applied a save this tick");
 		else if(!SolidWithinBlast)
 			LogRocket(2, "skip: no solid surface within blast reach");
@@ -1245,18 +1277,15 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				m_aAntiVoidRocketReleasePending[Dummy] = true;
 				m_aAntiVoidRocketLastFireTick[Dummy] = RocketTick;
 
-				// Don't re-fire before this rocket has actually landed. Aiming again from a velocity that
-				// does not include the blast yet would pick a different direction and the shots would fight
-				// each other (the log showed runs of up to 11 shots and opposite-direction pairs). The
-				// grenade flies at roughly m_GrenadeSpeed; convert the blast distance into ticks and wait
-				// that long at least.
-				const float BlastDist = distance(CharPos, RS.m_Blast);
-				const int FlightTicks = (int)(BlastDist / 20.0f) + 3; // ~1000px/s = ~20px per tick
-				m_aAntiVoidRocketCooldown[Dummy] = maximum(g_Config.m_TcAntiVoidRocketCooldown, minimum(FlightTicks, 25));
+				// BestAim already measured the projectile's real flight time with the active tuning.
+				// Reconstructing it from distance at a hard-coded 1000 px/s broke on tuned servers and
+				// could allow a second shot before the first one landed.
+				const int FlightTicks = (int)std::ceil(RS.m_BlastTicks) + 2;
+				m_aAntiVoidRocketCooldown[Dummy] = maximum(g_Config.m_TcAntiVoidRocketCooldown, FlightTicks);
 			}
 			else if(!RS.m_Found)
 			{
-				LogRocket(4, "skip: no solid detonation");
+				LogRocket(4, "skip: no usable detonation before danger");
 			}
 			else if(!RS.m_Improves)
 			{
