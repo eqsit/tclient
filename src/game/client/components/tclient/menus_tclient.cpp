@@ -3326,10 +3326,11 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 
 	// Rocket counter: a SEPARATE feature, keeps working with the Kinetix avoid
 	{
-		CUIRect Card = BeginCard(&RightCol, "Rocket", (g_Config.m_TcAntiVoidRocket ? 3.0f : 1.0f) * LineSize);
+		CUIRect Card = BeginCard(&RightCol, "Rocket", (g_Config.m_TcAntiVoidRocket ? 4.0f : 1.0f) * LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidRocket, "Counter the void with a rocket", &g_Config.m_TcAntiVoidRocket, &Card, LineSize);
 		if(g_Config.m_TcAntiVoidRocket)
 		{
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidRocketSmartPriority, "Smart priority: rocket-first only below", &g_Config.m_TcAntiVoidRocketSmartPriority, &Card, LineSize);
 			// Stored in hundredths of a pixel so it can go as low as 0.01px for very tight timing.
 			Card.HSplitTop(LineSize, &Button, &Card);
 			CUIRect SliderLabel, ScrollBar;

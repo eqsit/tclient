@@ -307,6 +307,7 @@ MACRO_CONFIG_INT(KxBafDebug, kx_baf_debug, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAV
 MACRO_CONFIG_INT(TcAntiVoidRocket, tc_anti_void_rocket, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void: if you have the grenade launcher, auto-fire a rocket toward the void so the explosion knocks you back to safety (works for falling down, flying up, or drifting sideways)")
 MACRO_CONFIG_INT(TcAntiVoidRocketDistance, tc_anti_void_rocket_distance, 10, 1, 32000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: how close to the void before it fires (the firing 'timing'), stored in HUNDREDTHS of a pixel so 100 = 1px (320px = 1 tile is value 32000); min 1 = 0.01px, i.e. fire at the very last hundredth of a pixel before the edge")
 MACRO_CONFIG_INT(TcAntiVoidRocketCooldown, tc_anti_void_rocket_cooldown, 1, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: minimum ticks between auto-fired rockets so it doesn't dump all your ammo at once")
+MACRO_CONFIG_INT(TcAntiVoidRocketSmartPriority, tc_anti_void_rocket_smart_priority, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: rocket-first only for freeze below; side/ceiling danger lets avoid try first and combines a rocket only when needed")
 MACRO_CONFIG_INT(TcAntiVoidRocketDebug, tc_anti_void_rocket_debug, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket debug log: 0=off 1=arm/fire/skip/suppressed 2=verbose every tick while danger is on the path")
 
 // Anti-void: laser self-ricochet counter

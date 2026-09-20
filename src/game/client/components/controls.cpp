@@ -1036,9 +1036,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		GameClient()->m_PredictedChar.m_aWeapons[WEAPON_GRENADE].m_Ammo != 0;
 
 	const float FireDist = (float)g_Config.m_TcAntiVoidRocketDistance / 100.0f; // stored in hundredths of a pixel, so the timing can be set right down to the edge
-	// Always judge the primary rocket plan from the player's input before avoid touched it. Avoid has
-	// already prepared a fallback in m_aInputData; we retain that fallback only for a partial rocket save.
-	const CNetObj_PlayerInput RocketInput = GameClient()->m_AvoidFreeze.HasInputBeforeOverride() ?
+	// Keep both plans. Which one rocket evaluates depends on where the danger is: below uses the raw
+	// player path (rocket-first), while side/ceiling danger uses avoid's prepared path (avoid-first).
+	const CNetObj_PlayerInput OriginalInput = GameClient()->m_AvoidFreeze.HasInputBeforeOverride() ?
 		GameClient()->m_AvoidFreeze.InputBeforeOverride() : m_aInputData[Dummy];
 
 	// Where is the tee actually heading? Predict the real trajectory with the current input and find the
@@ -1055,7 +1055,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		SimCore.SetHookedPlayer(-1);
 		for(int t = 1; t <= PathTicks && DangerTick < 0; ++t)
 		{
-			SimCore.m_Input = RocketInput;
+			SimCore.m_Input = OriginalInput;
 			const vec2 Prev = SimCore.m_Pos;
 			SimCore.Tick(true);
 			SimCore.Move();
@@ -1110,6 +1110,16 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	const bool AvoidOnlyDanger = DangerTick < 0 && BafDangerTick > 0;
 	const bool AvoidDangerInArm = AvoidOnlyDanger && (float)EffectiveDangerTick <= AvoidLeadTicks + 3.0f;
 	const bool AvoidDangerInFire = AvoidOnlyDanger && (float)EffectiveDangerTick <= AvoidLeadTicks;
+	// Teeworlds Y grows downward. Only a predominantly downward impact is "freeze below" and grants
+	// rocket maximum priority. A diagonal whose horizontal component dominates is a side impact and
+	// belongs to avoid. If only avoid's full-world model sees danger, use velocity as a conservative
+	// fallback; ambiguous cases deliberately stay avoid-first.
+	const vec2 DangerDelta = DangerPos - CharPos;
+	const bool DangerBelow = DangerTick >= 0 ?
+		(DangerDelta.y > 0.0f && DangerDelta.y >= absolute(DangerDelta.x)) :
+		(AvoidOnlyDanger && Vel.y > 0.0f && Vel.y >= absolute(Vel.x));
+	const bool SmartDirectionalPriority = g_Config.m_TcAntiVoidRocketSmartPriority != 0;
+	const CNetObj_PlayerInput RocketPlanInput = !SmartDirectionalPriority || DangerBelow ? OriginalInput : m_aInputData[Dummy];
 
 	const bool DangerInArm = (EffectiveDangerTick > 0 && (EffectiveDangerTick <= 12 || DangerDist <= R + FireDist + LeadDist)) || AvoidNoSolution || AvoidDangerInArm;
 	const bool DangerInFire = (EffectiveDangerTick > 0 && (DangerDist <= R + FireDist + FireLead || EffectiveDangerTick <= 2)) || AvoidNoSolution || AvoidDangerInFire;
@@ -1122,8 +1132,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// distance; beyond that BestAim rejects the shot, which used to leave us holding a useless
 	// grenade). A freeze with nothing solid around it would just swallow the grenade, so the weapon
 	// is not even taken in that case. BestAim does the precise check at fire time.
+	const bool RocketPolicyAllows = !SmartDirectionalPriority || DangerBelow || !AvoidSaves;
 	bool SolidWithinBlast = false;
-	for(int i = 0; DangerInArm && i < 16 && !SolidWithinBlast; i++)
+	for(int i = 0; DangerInArm && RocketPolicyAllows && i < 16 && !SolidWithinBlast; i++)
 	{
 		const vec2 Dir = direction((float)i / 16.0f * 2.0f * pi);
 		vec2 Hit;
@@ -1131,7 +1142,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			SolidWithinBlast = true;
 	}
 
-	const bool NeedRocket = DangerInArm && SolidWithinBlast;
+	// In optional smart-priority mode, floor freeze keeps rocket primary while side/ceiling freeze
+	// lets avoid go first. With the option off, preserve the current aggressive rocket-first behavior.
+	const bool NeedRocket = DangerInArm && SolidWithinBlast && RocketPolicyAllows;
 
 	// Active weapon alone does not mean it can fire. The old counter emitted a new "shot" every other
 	// tick while the server was still rejecting them for reload, then suppressed avoid as if those
@@ -1159,9 +1172,10 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		if(State == m_aAntiVoidRocketLogState[Dummy] && g_Config.m_TcAntiVoidRocketDebug < 2)
 			return;
 		m_aAntiVoidRocketLogState[Dummy] = State;
-		log_info("rocket", "tick=%d state=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[tick=%d dist=%.1f bafTick=%d] speed=%.1f armLead=%.0f fireLead=%.0f solid=%d avoidSaves=%d avoidNoSolution=%d grenade=%d ready=%d reload=%d cooldown=%d",
-			RocketTick, State, pText, CharPos.x, CharPos.y, Vel.x, Vel.y, DangerTick, DangerDist, BafDangerTick, Speed, LeadDist, FireLead,
-			SolidWithinBlast ? 1 : 0, AvoidSaves ? 1 : 0, AvoidNoSolution ? 1 : 0, HaveGrenade ? 1 : 0, GrenadeReady ? 1 : 0, GrenadeReload, m_aAntiVoidRocketCooldown[Dummy]);
+		log_info("rocket", "tick=%d state=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[tick=%d dist=%.1f bafTick=%d below=%d] speed=%.1f armLead=%.0f fireLead=%.0f solid=%d avoidSaves=%d avoidNoSolution=%d grenade=%d ready=%d reload=%d cooldown=%d",
+			RocketTick, State, pText, CharPos.x, CharPos.y, Vel.x, Vel.y, DangerTick, DangerDist, BafDangerTick, DangerBelow ? 1 : 0,
+			Speed, LeadDist, FireLead, SolidWithinBlast ? 1 : 0, AvoidSaves ? 1 : 0, AvoidNoSolution ? 1 : 0,
+			HaveGrenade ? 1 : 0, GrenadeReady ? 1 : 0, GrenadeReload, m_aAntiVoidRocketCooldown[Dummy]);
 	};
 
 	// Weapon binds are authoritative. Once the player changes weapon during a rocket-save window,
@@ -1181,7 +1195,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 
 	if(DangerInArm)
 	{
-		if(!SolidWithinBlast)
+		if(SmartDirectionalPriority && !DangerBelow && AvoidSaves)
+			LogRocket(1, "avoid-first: side/ceiling danger is already handled");
+		else if(!SolidWithinBlast)
 			LogRocket(2, "skip: no solid surface within blast reach");
 	}
 	else if(m_aAntiVoidRocketLogState[Dummy] > 0)
@@ -1240,7 +1256,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			// Profiling: the aim search flies 32 grenades and runs the tee forward for the good ones;
 			// report it when it is slow enough to be felt.
 			const int64_t ProfAim = time_get();
-			const CRocketSaveAim RS = CRocketSave::BestAim(Collision(), GameClient()->m_PredictedChar, RocketInput, Cfg, FireDir);
+			const CRocketSaveAim RS = CRocketSave::BestAim(Collision(), GameClient()->m_PredictedChar, RocketPlanInput, Cfg, FireDir);
 			if(g_Config.m_TcAntiVoidRocketDebug >= 1)
 			{
 				const float AimMs = (float)(time_get() - ProfAim) * 1000.0f / (float)time_freq();
@@ -1262,9 +1278,10 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			if(ShouldFire)
 			{
 				LogRocket(5, "FIRE rocket");
-				const bool PlayerHookUncertain = RocketInput.m_Hook != 0 &&
+				const bool PlayerHookUncertain = RocketPlanInput.m_Hook != 0 &&
 					(GameClient()->m_PredictedChar.HookedPlayer() >= 0 || GameClient()->m_PredictedChar.m_HookState == HOOK_FLYING);
-				const bool RocketAloneSaves = RS.m_Improves && RS.m_Score >= (float)CRocketSave::ms_Tuning.m_Horizon && !PlayerHookUncertain;
+				const bool RocketAloneSaves = (!SmartDirectionalPriority || DangerBelow) && RS.m_Improves &&
+					RS.m_Score >= (float)CRocketSave::ms_Tuning.m_Horizon && !PlayerHookUncertain;
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
 					log_info("rocket", "  mode=%s aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
 						RocketAloneSaves ? "rocket-first" : "rocket+avoid", RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y,
@@ -1275,9 +1292,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				// tick is evaluated afresh, so avoid immediately takes over if the explosion was not enough.
 				if(RocketAloneSaves)
 				{
-					m_aInputData[Dummy].m_Direction = RocketInput.m_Direction;
-					m_aInputData[Dummy].m_Jump = RocketInput.m_Jump;
-					m_aInputData[Dummy].m_Hook = RocketInput.m_Hook;
+					m_aInputData[Dummy].m_Direction = OriginalInput.m_Direction;
+					m_aInputData[Dummy].m_Jump = OriginalInput.m_Jump;
+					m_aInputData[Dummy].m_Hook = OriginalInput.m_Hook;
 					GameClient()->m_AvoidFreeze.DiscardOverrideForRocket();
 				}
 				// Never launch a new hook along the temporary rocket aim. Existing attached/flying hooks
