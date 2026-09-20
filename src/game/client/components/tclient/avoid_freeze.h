@@ -8,10 +8,7 @@
 //      (freeze / teleport / death, depending on the kx_baf_avoid_* cvars)
 //      happens, activate avoidance.
 //   2. Brute-force all combinations of {direction, jump, hook, aim angles}
-//      and keep the ones that survive the whole window. Alternative aim angles
-//      are only tried while the player is neither holding hook nor aiming at
-//      another tee: the visible aim belongs to the player, avoid never
-//      redirects a throw at someone.
+//      and keep the ones that survive the whole window.
 //   3. Prefer waiting one more tick if any combination does; otherwise pick
 //      the combination with the longest survival and the smallest input diff.
 //   4. Override the player's input with the chosen combination. In silent
