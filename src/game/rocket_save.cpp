@@ -159,7 +159,7 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 	return (float)Ticks + minimum(Worst, ROCKET_CLEARANCE_MAX);
 }
 
-CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore &Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, vec2 Fallback)
+CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore &Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, vec2 Fallback, int Rays)
 {
 	CRocketSaveAim Out;
 	CCharacterCore Sim = Core;
@@ -181,7 +181,11 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// shot that barely tickles it is not treated as a save.
 	const vec2 DesiredPush = length(Fallback) > 0.001f ? -normalize(Fallback) :
 		(length(Sim.m_Vel) > 0.001f ? -normalize(Sim.m_Vel) : vec2(0.0f, -1.0f));
-	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick, float *pOutEscapeKick, float *pOutTicks) -> float {
+	// Direction of travel at fire time. The boost kick below measures how much speed a blast adds
+	// along it, which is what "save and speed up" means for the boost option.
+	const float SpeedNow = length(Sim.m_Vel);
+	const vec2 MoveDir = SpeedNow > 0.001f ? Sim.m_Vel / SpeedNow : vec2(0.0f, 0.0f);
+	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick, float *pOutEscapeKick, float *pOutTicks, float *pOutBoostKick) -> float {
 		bool HitSolid = false;
 		float BlastTime = Cfg.m_Lifetime;
 		const vec2 Blast = BlastPos(pCollision, Sim.m_Pos, Dir, Cfg, &HitSolid, &BlastTime);
@@ -193,6 +197,8 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			*pOutEscapeKick = 0.0f;
 		if(pOutTicks)
 			*pOutTicks = 0.0f;
+		if(pOutBoostKick)
+			*pOutBoostKick = 0.0f;
 		if(!HitSolid)
 			return 0.0f;
 		if(pOutTicks)
@@ -207,6 +213,8 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			*pOutKick = Kick;
 		if(pOutEscapeKick)
 			*pOutEscapeKick = dot(KickVec, DesiredPush);
+		if(pOutBoostKick)
+			*pOutBoostKick = dot(KickVec, MoveDir);
 		if(Kick < ROCKET_MIN_KICK)
 			return 0.0f;
 		return Score;
@@ -218,12 +226,14 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 		vec2 Blast;
 		float Kick = 0.0f;
 		float EscapeKick = 0.0f;
+		float BoostKick = 0.0f;
 		Out.m_Dir = normalize(Fallback);
-		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick, &EscapeKick, &Out.m_BlastTicks);
+		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick, &EscapeKick, &Out.m_BlastTicks, &BoostKick);
 		Out.m_Score = Out.m_PlainScore;
 		Out.m_Blast = Blast;
 		Out.m_Kick = Kick;
 		Out.m_EscapeKick = EscapeKick;
+		Out.m_BoostKick = BoostKick;
 		Out.m_Found = Out.m_PlainScore > 0.0f; // the plain aim only counts if it hits something solid
 	}
 
@@ -231,31 +241,63 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// blast throw us BACK out of the danger we are flying into. Aiming behind us would only push us in
 	// harder. The nearest solid surface within that arc is the one that hits hardest, and the tie-break
 	// below picks it.
-	const float Speed = length(Sim.m_Vel);
-	const vec2 MoveDir = Speed > 0.001f ? Sim.m_Vel / Speed : vec2(0.0f, 0.0f);
-	for(int i = 0; i < ms_Tuning.m_Rays; ++i)
+	const int RayCount = Rays > 0 ? Rays : ms_Tuning.m_Rays;
+	for(int i = 0; i < RayCount; ++i)
 	{
-		const vec2 Dir = direction((float)i / (float)ms_Tuning.m_Rays * 2.0f * pi);
-		if(Speed > 1.0f && dot(MoveDir, Dir) < ms_Tuning.m_InertiaDot)
+		const vec2 Dir = direction((float)i / (float)RayCount * 2.0f * pi);
+		if(SpeedNow > 1.0f && dot(MoveDir, Dir) < ms_Tuning.m_InertiaDot)
 			continue; // behind us: firing there would shove us further into what we are flying at
 		vec2 Blast;
 		float Kick = 0.0f;
 		float EscapeKick = 0.0f;
+		float BoostKick = 0.0f;
 		float BlastTicks = 0.0f;
-		const float Score = Try(Dir, &Blast, &Kick, &EscapeKick, &BlastTicks);
+		const float Score = Try(Dir, &Blast, &Kick, &EscapeKick, &BlastTicks, &BoostKick);
 		// Once several shots all survive the full horizon, prefer the one whose REAL impulse points
 		// furthest away from the predicted danger. Clearance-only ranking could choose a visually
 		// nonsensical side shot even though a direct, equally safe push existed. For partial saves,
-		// survival time remains authoritative.
+		// survival time remains authoritative. With the boost option on, speed gained along the
+		// direction of travel ranks above the escape direction (both shots are full saves anyway).
 		const bool FullSave = Score >= (float)ms_Tuning.m_Horizon;
 		const bool BestFullSave = Out.m_Score >= (float)ms_Tuning.m_Horizon;
 		bool Better = false;
-		if(FullSave != BestFullSave)
+		if(Cfg.m_Boost)
+		{
+			// Boost option: the rocket is a rocket jump first and a save second. The blast has to sit
+			// on the far side of where the tee is going, so the explosion throws it along its travel:
+			// while the tee is MOVING the shot that adds the most speed along the direction of travel
+			// wins (blast behind/below, classic rocket jump); while it hovers or crawls the shot that
+			// launches it hardest AWAY from the danger wins (the "hovering over freeze with ground
+			// below, shoot the ground and fly up" case). The plan must still improve on doing nothing,
+			// and a clearly harder push may trade up to a few ticks of simulated survival for it -
+			// the save is allowed to be partial, avoid and the hooks keep covering the rest.
+			const bool Moving = SpeedNow > 3.0f;
+			const bool Improves = Score > Out.m_BaseScore;
+			const bool BestImproves = Out.m_Found && Out.m_Score > Out.m_BaseScore;
+			if(Improves != BestImproves)
+				Better = Improves;
+			else if(Improves)
+			{
+				const float MyPush = Moving ? BoostKick : EscapeKick;
+				const float BestPush = Moving ? Out.m_BoostKick : Out.m_EscapeKick;
+				if(MyPush > BestPush + 1.0f && Score >= Out.m_Score - 3.0f)
+					Better = true;
+				else if(absolute(MyPush - BestPush) <= 1.0f &&
+					(Kick > Out.m_Kick + 1.0f ||
+						(absolute(Kick - Out.m_Kick) <= 1.0f && Score > Out.m_Score)))
+					Better = true;
+			}
+			else
+				Better = Score > Out.m_Score;
+		}
+		else if(FullSave != BestFullSave)
 			Better = FullSave;
 		else if(FullSave)
+		{
 			Better = EscapeKick > Out.m_EscapeKick + 0.25f ||
 				(absolute(EscapeKick - Out.m_EscapeKick) <= 0.25f &&
 					(Score > Out.m_Score || (Score >= Out.m_Score - 0.5f && Kick > Out.m_Kick)));
+		}
 		else
 			Better = Score > Out.m_Score || (Score > 0.0f && Score >= Out.m_Score - 0.5f && Kick > Out.m_Kick);
 		if(Better)
@@ -265,6 +307,7 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			Out.m_Blast = Blast;
 			Out.m_Kick = Kick;
 			Out.m_EscapeKick = EscapeKick;
+			Out.m_BoostKick = BoostKick;
 			Out.m_BlastTicks = BlastTicks;
 			Out.m_Found = true;
 		}

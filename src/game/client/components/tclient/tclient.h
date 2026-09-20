@@ -18,6 +18,7 @@ class CTClient : public CComponent
 
 	static void ConAvoidToggle(IConsole::IResult *pResult, void *pUserData);
 	static void ConBalancerToggle(IConsole::IResult *pResult, void *pUserData);
+	static void ConAntiVoidRocketModeNext(IConsole::IResult *pResult, void *pUserData);
 	static void ConWeaponSpinToggle(IConsole::IResult *pResult, void *pUserData);
 	static void ConWeaponSpinModeNext(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleMenu(IConsole::IResult *pResult, void *pUserData);

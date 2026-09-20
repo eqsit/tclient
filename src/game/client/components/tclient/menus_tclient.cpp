@@ -3269,7 +3269,9 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 		CUIRect Card = BeginCard(&LeftCol, "Allowed inputs", (5.0f + (g_Config.m_KxBafReleaseHook ? 1.0f : 0.0f) + (g_Config.m_KxBafAim ? 2.0f : 0.0f)) * LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafDirection, "Direction", &g_Config.m_KxBafDirection, &Card, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafJump, "Jump", &g_Config.m_KxBafJump, &Card, LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafHook, "Throw a hook in escape combos", &g_Config.m_KxBafHook, &Card, LineSize);
+		// Hooks are always allowed; they are tried after every no-hook combination, so avoid only
+		// throws one when nothing else survives (and the aggressive rocket discards it while it saves).
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafHook, "Throw a hook in escape combos (last resort)", &g_Config.m_KxBafHook, &Card, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafReleaseHook, "Release my hook when it pulls into danger", &g_Config.m_KxBafReleaseHook, &Card, LineSize);
 		if(g_Config.m_KxBafReleaseHook)
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafRehook, "Automatically rehook when safe", &g_Config.m_KxBafRehook, &Card, LineSize);
@@ -3297,7 +3299,7 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 		static CButtonContainer s_ReaderButtonAntiVoid, s_ClearButtonAntiVoid;
 		DoLine_KeyReader(Card, s_ReaderButtonAntiVoid, s_ClearButtonAntiVoid, "Toggle avoid", "tc_avoid_toggle");
 		static CButtonContainer s_ReaderButtonRocket, s_ClearButtonRocket;
-		DoLine_KeyReader(Card, s_ReaderButtonRocket, s_ClearButtonRocket, "Toggle rocket", "toggle tc_anti_void_rocket 0 1");
+		DoLine_KeyReader(Card, s_ReaderButtonRocket, s_ClearButtonRocket, "Next rocket mode", "tc_anti_void_rocket_mode_next");
 	}
 
 	// Debug logs (write to the console and the log files; tag "avoid" / "rocket")
@@ -3324,13 +3326,41 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 		Ui()->DoScrollbarOption(&g_Config.m_TcAvoidFreezeMargin, &g_Config.m_TcAvoidFreezeMargin, &Button, "Freeze slack", 0, 14, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " px");
 	}
 
-	// Rocket counter: a SEPARATE feature, keeps working with the Kinetix avoid
+	// Rocket counter: a SEPARATE feature, keeps working with the Kinetix avoid.
+	// tc_anti_void_rocket is a three-state switch: Off / Normal / Aggressive (max rocket priority).
 	{
-		CUIRect Card = BeginCard(&RightCol, "Rocket", (g_Config.m_TcAntiVoidRocket ? 4.0f : 1.0f) * LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidRocket, "Counter the void with a rocket", &g_Config.m_TcAntiVoidRocket, &Card, LineSize);
-		if(g_Config.m_TcAntiVoidRocket)
+		const int RocketMode = g_Config.m_TcAntiVoidRocket;
+		float RocketLines = 1.0f; // mode picker
+		if(RocketMode == CControls::ANTI_VOID_ROCKET_NORMAL)
+			RocketLines += 2.0f; // smart priority + boost
+		if(RocketMode > CControls::ANTI_VOID_ROCKET_OFF)
+			RocketLines += 2.0f; // fire distance + cooldown
+		CUIRect Card = BeginCard(&RightCol, "Rocket", RocketLines * LineSize);
+
+		// ***** Mode picker (one button per mode) ***** //
+		Card.HSplitTop(LineSize, &Button, &Card);
+		static CButtonContainer s_aRocketModeButtons[CControls::NUM_ANTI_VOID_ROCKET_MODES];
+		static const char *const s_apRocketModeNames[CControls::NUM_ANTI_VOID_ROCKET_MODES] = {"Off", "Normal", "Aggressive"};
+		CUIRect ModeRow = Button;
+		const float ModeGap = 4.0f;
+		const float ModeButtonWidth = (ModeRow.w - ModeGap * (CControls::NUM_ANTI_VOID_ROCKET_MODES - 1)) / (float)CControls::NUM_ANTI_VOID_ROCKET_MODES;
+		for(int i = 0; i < CControls::NUM_ANTI_VOID_ROCKET_MODES; ++i)
+		{
+			CUIRect ModeButton, Gap;
+			ModeRow.VSplitLeft(ModeButtonWidth, &ModeButton, &ModeRow);
+			if(i + 1 < CControls::NUM_ANTI_VOID_ROCKET_MODES)
+				ModeRow.VSplitLeft(ModeGap, &Gap, &ModeRow);
+			if(DoButton_Menu(&s_aRocketModeButtons[i], s_apRocketModeNames[i], RocketMode == i, &ModeButton))
+				g_Config.m_TcAntiVoidRocket = i;
+		}
+
+		if(RocketMode == CControls::ANTI_VOID_ROCKET_NORMAL)
 		{
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidRocketSmartPriority, "Smart priority: rocket-first only below", &g_Config.m_TcAntiVoidRocketSmartPriority, &Card, LineSize);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidRocketBoost, "Boost: hooks save, rocket speeds you up", &g_Config.m_TcAntiVoidRocketBoost, &Card, LineSize);
+		}
+		if(RocketMode > CControls::ANTI_VOID_ROCKET_OFF)
+		{
 			// Stored in hundredths of a pixel so it can go as low as 0.01px for very tight timing.
 			Card.HSplitTop(LineSize, &Button, &Card);
 			CUIRect SliderLabel, ScrollBar;

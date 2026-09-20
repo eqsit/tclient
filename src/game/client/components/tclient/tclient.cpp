@@ -417,6 +417,14 @@ void CTClient::ConWeaponSpinToggle(IConsole::IResult *pResult, void *pUserData)
 	((CTClient *)pUserData)->GameClient()->Echo(g_Config.m_TcWeaponSpin ? "Weapon spin: ON" : "Weapon spin: OFF");
 }
 
+void CTClient::ConAntiVoidRocketModeNext(IConsole::IResult *pResult, void *pUserData)
+{
+	g_Config.m_TcAntiVoidRocket = (g_Config.m_TcAntiVoidRocket + 1) % CControls::NUM_ANTI_VOID_ROCKET_MODES;
+	char aBuf[64];
+	str_format(aBuf, sizeof(aBuf), "Rocket anti-void: %s", CControls::AntiVoidRocketModeName(g_Config.m_TcAntiVoidRocket));
+	((CTClient *)pUserData)->GameClient()->Echo(aBuf);
+}
+
 void CTClient::ConWeaponSpinModeNext(IConsole::IResult *pResult, void *pUserData)
 {
 	static const char *s_apModeNames[CControls::NUM_WEAPON_SPIN_MODES] = {
@@ -459,16 +467,22 @@ void CTClient::OnConsoleInit()
 				pThis->GameClient()->Echo(g_Config.m_TcHookAim ? "Hook aim: ON" : "Hook aim: OFF");
 		},
 		this);
-	// Same for the rocket anti-void: announce on/off in chat on any change (e.g. `toggle tc_anti_void_rocket 0 1`).
+	// Same for the rocket anti-void: announce the mode in chat on any change (e.g.
+	// `tc_anti_void_rocket_mode_next`, or `tc_anti_void_rocket 2` for aggressive).
 	Console()->Chain(
 		"tc_anti_void_rocket", [](IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData) {
 			const int Old = g_Config.m_TcAntiVoidRocket;
 			pfnCallback(pResult, pCallbackUserData);
 			CTClient *pThis = (CTClient *)pUserData;
 			if(pResult->NumArguments() > 0 && g_Config.m_TcAntiVoidRocket != Old && pThis->Client()->State() == IClient::STATE_ONLINE)
-				pThis->GameClient()->Echo(g_Config.m_TcAntiVoidRocket ? "Rocket anti-void: ON" : "Rocket anti-void: OFF");
+			{
+				char aBuf[64];
+				str_format(aBuf, sizeof(aBuf), "Rocket anti-void: %s", CControls::AntiVoidRocketModeName(g_Config.m_TcAntiVoidRocket));
+				pThis->GameClient()->Echo(aBuf);
+			}
 		},
 		this);
+	Console()->Register("tc_anti_void_rocket_mode_next", "", CFGFLAG_CLIENT, ConAntiVoidRocketModeNext, this, "Cycle the anti-void rocket mode: off -> normal -> aggressive (bindable)");
 	Console()->Register("tc_weapon_spin_toggle", "", CFGFLAG_CLIENT, ConWeaponSpinToggle, this, "Toggle the weapon spinner on/off (bindable)");
 	Console()->Register("tc_weapon_spin_mode_next", "", CFGFLAG_CLIENT, ConWeaponSpinModeNext, this, "Cycle to the next weapon spinner mode (bindable)");
 	Console()->Register("tc_toggle_menu", "", CFGFLAG_CLIENT, ConToggleMenu, this, "Toggle the cheat menu (F12)");

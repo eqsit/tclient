@@ -56,6 +56,19 @@ public:
 	int AvoidDangerClassPoint(float x, float y, bool ForceFreezeRecoverable = false) const; // classify one tile point: 0 = safe, 1 = recoverable freeze, 2 = lethal. ForceFreezeRecoverable: freeze counts as class 1 even with tc_avoid_unfreeze off
 	bool AvoidHardDeathPoint(float x, float y) const; // is this point a kill tile or off-map (the hitbox-corner death test, freeze excluded)
 	int AvoidDangerClass(float x, float y, bool ForceFreezeRecoverable = false) const; // same but for the whole tee body at (x,y): centre + 4 hitbox corners, worst wins
+	// Anti-void rocket modes (tc_anti_void_rocket). OFF disables it, NORMAL keeps the per-direction
+	// policy of tc_anti_void_rocket_smart_priority, AGGRESSIVE gives the rocket maximum priority:
+	// rocket-first for every direction, arm/fire as early as a valid shot allows, and avoid's
+	// correction is discarded whenever the rocket alone covers the whole prediction window (avoid
+	// still runs every tick and stays the fallback).
+	enum
+	{
+		ANTI_VOID_ROCKET_OFF = 0,
+		ANTI_VOID_ROCKET_NORMAL = 1,
+		ANTI_VOID_ROCKET_AGGRESSIVE = 2,
+		NUM_ANTI_VOID_ROCKET_MODES,
+	};
+	static const char *AntiVoidRocketModeName(int Mode);
 	void ApplyAntiVoidRocket(bool Suppressed = false); // rocket-first grenade counter. Suppressed: do upkeep (release fire, tick cooldown) but don't arm/fire
 	void CancelAntiVoidRocket(int Dummy, bool ReleaseFire = true); // relinquish fire/weapon ownership when disabled, reset, or dead
 	static constexpr int MAX_LASER_BOUNCES = 12;

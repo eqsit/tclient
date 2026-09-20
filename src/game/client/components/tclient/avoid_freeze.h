@@ -57,6 +57,15 @@ private:
 	// Set when avoid force-releases a hook that the player is still holding. Unless
 	// kx_baf_rehook is enabled, keep the hook suppressed until the key is released.
 	bool m_BlockHeldHookUntilRelease = false;
+	// Rocket Aggressive short-hook bookkeeping: avoid threw this hook itself (the player is not
+	// holding the key) and has not let go of it yet. Used to release it as soon as the tee no longer
+	// needs it, so the save cannot turn into a long visible hang.
+	bool m_AutoHookHeld = false;
+	int m_AutoHookHeldSinceTick = -1;
+	// PredGameTick of the last short-hook release. For a few ticks after it avoid does not start a new
+	// hook, otherwise the release would be undone by the very next tick and the hook would flicker
+	// instead of disappearing.
+	int m_AutoHookReleasedTick = -1;
 	// Result of this tick's evaluation, read by the rocket counter (WouldSave).
 	bool m_SavedThisTick = false;
 	bool m_HasInputBeforeOverride = false;
@@ -70,7 +79,8 @@ private:
 	int m_LogAction = -1;
 
 public:
-	// Last logged decision (debug): 0 safe, 1 wait, 2 override, 3 hook release, 4 no solution.
+	// Last logged decision (debug): 0 safe, 1 wait, 2 override, 3 hook release, 4 no solution,
+	// 9 short-hook release (aggressive rocket mode letting go of its own hook early).
 	int LastAction() const { return m_LogAction; }
 	// No input survives: the rocket counter uses this to fire as soon as it has a valid shot.
 	bool NoSolution() const { return m_NoSolutionThisTick; }

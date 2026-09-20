@@ -1004,15 +1004,38 @@ void CControls::ApplyHoleAssist()
 	}
 }
 
+const char *CControls::AntiVoidRocketModeName(int Mode)
+{
+	switch(Mode)
+	{
+	case ANTI_VOID_ROCKET_OFF: return "OFF";
+	case ANTI_VOID_ROCKET_NORMAL: return "Normal";
+	case ANTI_VOID_ROCKET_AGGRESSIVE: return "Aggressive";
+	default: return "?";
+	}
+}
+
 // TClient: rocket (grenade) counter. Independent of the braking anti-void (tc_anti_void): if we carry
 // the grenade launcher and are flying into the void, auto-fire a rocket along our movement direction so
 // the explosion sits between us and the void and knocks us straight back. Works even when the basic
 // anti-void is turned off. Each shot is a clean single press, rate-limited by a cooldown.
+// tc_anti_void_rocket picks the mode: OFF, NORMAL (per-direction policy of the smart-priority option)
+// or AGGRESSIVE (rocket gets maximum priority, see CControls::ANTI_VOID_ROCKET_*).
 void CControls::ApplyAntiVoidRocket(bool Suppressed)
 {
 	const int Dummy = g_Config.m_ClDummy;
 	const vec2 CharPos = LocalCharPos();
 	const float R = 28.0f; // tee half-size
+
+	// Aggressive mode: the rocket is the primary save for any danger it can fully counter on its own,
+	// for every direction. Avoid keeps running every tick and remains the fallback; only the movement
+	// correction avoid prepared this tick is dropped when a full-window rocket plan exists.
+	const bool RocketAggressive = g_Config.m_TcAntiVoidRocket >= ANTI_VOID_ROCKET_AGGRESSIVE;
+	// Boost option (normal mode): hooks are the primary save there, the rocket is the accelerator. The
+	// rocket shot is picked for the speed it adds (see CRocketSaveCfg::m_Boost), avoid's movement/hook
+	// correction stays in the packet (rocket + avoid instead of a pure rocket save), and only when
+	// avoid has no solution at all does the rocket take over as the actual save.
+	const bool RocketBoost = g_Config.m_TcAntiVoidRocketBoost != 0 && !RocketAggressive;
 
 	// First, release the fire press we made on the previous tick. Without this the fire bit stays "held",
 	// which on a full-auto-grenade server keeps firing forever even after we have left the void. We only
@@ -1040,6 +1063,12 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// player path (rocket-first), while side/ceiling danger uses avoid's prepared path (avoid-first).
 	const CNetObj_PlayerInput OriginalInput = GameClient()->m_AvoidFreeze.HasInputBeforeOverride() ?
 		GameClient()->m_AvoidFreeze.InputBeforeOverride() : m_aInputData[Dummy];
+
+	// Boost mode: avoid's hook throw goes out first, the rocket boosts on the next tick. On the tick
+	// avoid actually launches a hook the aim in the packet belongs to that hook, so the rocket holds
+	// its fire until the hook is flying/attached (then the aim no longer matters for it).
+	const bool AvoidHookThrowTick = RocketBoost && OriginalInput.m_Hook == 0 && m_aInputData[Dummy].m_Hook != 0 &&
+		GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE;
 
 	// Where is the tee actually heading? Predict the real trajectory with the current input and find the
 	// first place it would touch danger. This is what fixes the inertia case: even when we fly fast
@@ -1118,21 +1147,28 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	const bool DangerBelow = DangerTick >= 0 ?
 		(DangerDelta.y > 0.0f && DangerDelta.y >= absolute(DangerDelta.x)) :
 		(AvoidOnlyDanger && Vel.y > 0.0f && Vel.y >= absolute(Vel.x));
-	const bool SmartDirectionalPriority = g_Config.m_TcAntiVoidRocketSmartPriority != 0;
+	// Aggressive mode ignores the smart-priority option: rocket-first everywhere, planned on the
+	// player's own input so the save is a pure rocket save.
+	const bool SmartDirectionalPriority = !RocketAggressive && g_Config.m_TcAntiVoidRocketSmartPriority != 0;
 	const CNetObj_PlayerInput RocketPlanInput = !SmartDirectionalPriority || DangerBelow ? OriginalInput : m_aInputData[Dummy];
 
-	const bool DangerInArm = (EffectiveDangerTick > 0 && (EffectiveDangerTick <= 12 || DangerDist <= R + FireDist + LeadDist)) || AvoidNoSolution || AvoidDangerInArm;
+	// Aggressive mode arms the grenade for ANY danger already on the predicted path, not only the
+	// last-moment window, so the first useful fire tick is never missed.
+	const int ArmTickWindow = RocketAggressive ? 20 : 12;
+	const bool DangerInArm = (EffectiveDangerTick > 0 && (EffectiveDangerTick <= ArmTickWindow || DangerDist <= R + FireDist + LeadDist)) || AvoidNoSolution || AvoidDangerInArm;
 	const bool DangerInFire = (EffectiveDangerTick > 0 && (DangerDist <= R + FireDist + FireLead || EffectiveDangerTick <= 2)) || AvoidNoSolution || AvoidDangerInFire;
-	// Genuinely about to be hit and nothing else saves us: ignore the flight cooldown and fire whatever
-	// we can. The extra blast can only add velocity; waiting for the previous one is pointless here.
-	const bool Emergency = AvoidNoSolution && EffectiveDangerTick > 0 && EffectiveDangerTick <= 2;
+	// Genuinely about to be hit and nothing else fully saves us: ignore the flight cooldown and fire
+	// whatever we can. The extra blast can only add velocity; waiting for the previous one is pointless
+	// here. Aggressive mode also treats avoid's partial (non-full-window) saves as "nothing else",
+	// because the rocket is the primary plan there.
+	const bool Emergency = (AvoidNoSolution || (RocketAggressive && !AvoidSaves)) && EffectiveDangerTick > 0 && EffectiveDangerTick <= 2;
 
 	// A rocket is only worth taking when there is a solid surface to detonate against within blast
 	// reach. 106px is where the explosion still gives a kick worth having (force falls off with
 	// distance; beyond that BestAim rejects the shot, which used to leave us holding a useless
 	// grenade). A freeze with nothing solid around it would just swallow the grenade, so the weapon
 	// is not even taken in that case. BestAim does the precise check at fire time.
-	const bool RocketPolicyAllows = !SmartDirectionalPriority || DangerBelow || !AvoidSaves;
+	const bool RocketPolicyAllows = !SmartDirectionalPriority || DangerBelow || !AvoidSaves || RocketBoost;
 	bool SolidWithinBlast = false;
 	for(int i = 0; DangerInArm && RocketPolicyAllows && i < 16 && !SolidWithinBlast; i++)
 	{
@@ -1172,9 +1208,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		if(State == m_aAntiVoidRocketLogState[Dummy] && g_Config.m_TcAntiVoidRocketDebug < 2)
 			return;
 		m_aAntiVoidRocketLogState[Dummy] = State;
-		log_info("rocket", "tick=%d state=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[tick=%d dist=%.1f bafTick=%d below=%d] speed=%.1f armLead=%.0f fireLead=%.0f solid=%d avoidSaves=%d avoidNoSolution=%d grenade=%d ready=%d reload=%d cooldown=%d",
+		log_info("rocket", "tick=%d state=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[tick=%d dist=%.1f bafTick=%d below=%d] mode=%d speed=%.1f armLead=%.0f fireLead=%.0f solid=%d avoidSaves=%d avoidNoSolution=%d grenade=%d ready=%d reload=%d cooldown=%d",
 			RocketTick, State, pText, CharPos.x, CharPos.y, Vel.x, Vel.y, DangerTick, DangerDist, BafDangerTick, DangerBelow ? 1 : 0,
-			Speed, LeadDist, FireLead, SolidWithinBlast ? 1 : 0, AvoidSaves ? 1 : 0, AvoidNoSolution ? 1 : 0,
+			g_Config.m_TcAntiVoidRocket, Speed, LeadDist, FireLead, SolidWithinBlast ? 1 : 0, AvoidSaves ? 1 : 0, AvoidNoSolution ? 1 : 0,
 			HaveGrenade ? 1 : 0, GrenadeReady ? 1 : 0, GrenadeReload, m_aAntiVoidRocketCooldown[Dummy]);
 	};
 
@@ -1223,14 +1259,21 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			LogRocket(11, "hold: grenade is reloading, avoid remains authoritative");
 
 		// Fire once the grenade is in hand and either the usual gate is met or avoid has no solution at
-		// all (last resort). One clean press (released next tick).
-		if(GrenadeReady && (DangerInFire || (AvoidNoSolution && DangerInArm)) && (m_aInputData[Dummy].m_Fire & 1) == 0)
+		// all (last resort). One clean press (released next tick). The distance/tick gates stay in
+		// force in aggressive mode too: the priority is about WHO saves, not about firing from far
+		// away (early shots hit walls that only made sense for a path the player then left).
+		const bool FireGate = DangerInFire || (AvoidNoSolution && DangerInArm);
+		if(GrenadeReady && FireGate && !AvoidHookThrowTick && (m_aInputData[Dummy].m_Fire & 1) == 0)
 		{
 			// WHERE to fire: fly the grenade in every direction with the real projectile maths, detonate it
 			// on the real surface, apply the real explosion force and run the tee forward. The direction that
 			// keeps us out of freeze the longest wins, so the blast throws us straight away from the danger
 			// (a ceiling freeze gets an upward shot that pushes down) instead of along our sideways inertia.
-			vec2 FireDir = DangerPos - CharPos;
+			// Only use the danger position when OUR path actually found it. When only avoid sees the
+			// danger, DangerPos is still (0,0); taking it as the direction pointed the initial aim at
+			// the top-left corner of the map (the 32-direction search still overrode it, but the plain
+			// baseline and the desired push were nonsense). Fall back to the direction of motion.
+			vec2 FireDir = DangerTick >= 0 ? DangerPos - CharPos : vec2(0.0f, 0.0f);
 			if(length(FireDir) > 0.001f)
 				FireDir = normalize(FireDir);
 			else if(Speed > 0.001f)
@@ -1252,11 +1295,18 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			Cfg.m_DeepFreeze = g_Config.m_TcAntiVoidDeepFreeze != 0;
 			Cfg.m_LiveFreeze = g_Config.m_TcAntiVoidLiveFreeze != 0;
 			Cfg.m_Death = g_Config.m_TcAntiVoidDeath != 0;
+			Cfg.m_Boost = RocketBoost;
 
 			// Profiling: the aim search flies 32 grenades and runs the tee forward for the good ones;
 			// report it when it is slow enough to be felt.
 			const int64_t ProfAim = time_get();
-			const CRocketSaveAim RS = CRocketSave::BestAim(Collision(), GameClient()->m_PredictedChar, RocketPlanInput, Cfg, FireDir);
+			// Aggressive mode flies a denser fan (48 directions instead of 32): more real detonations
+			// are found and the chance a good escape was missed between two rays drops. Boost mode
+			// goes to 64 (~5.6 degrees per ray): there the rocket is a rocket jump, so the exact angle
+			// of the blast behind the tee decides how much speed it adds, and a coarse fan could miss
+			// the strongest launch.
+			const int AimRays = RocketBoost ? 64 : (RocketAggressive ? 48 : 0);
+			const CRocketSaveAim RS = CRocketSave::BestAim(Collision(), GameClient()->m_PredictedChar, RocketPlanInput, Cfg, FireDir, AimRays);
 			if(g_Config.m_TcAntiVoidRocketDebug >= 1)
 			{
 				const float AimMs = (float)(time_get() - ProfAim) * 1000.0f / (float)time_freq();
@@ -1271,7 +1321,18 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			const bool FireWindow = EffectiveDangerTick > 0 && EffectiveDangerTick <= FlightTicks + 6;
 			const bool CanLandSafely = EffectiveDangerTick > FlightTicks + 1;
 			const bool LastChance = EffectiveDangerTick > 0 && !CanLandSafely;
-			const bool PositiveEscapeKick = RS.m_EscapeKick > 1.0f;
+			// Aggressive mode accepts a barely-positive escape push as long as the plan still survives
+			// the whole window; normal mode wants a push it can actually feel (1 px/tick). Boost mode
+			// also accepts a rocket-jump shot: a blast behind the tee that adds real speed along the
+			// travel is fired even when its escape component is small or negative, because the
+			// simulation already proved the boosted path improves on doing nothing.
+			const bool PositiveEscapeKick = RocketBoost ?
+				(RS.m_EscapeKick > 1.0f || RS.m_BoostKick > 2.0f) :
+				(RS.m_EscapeKick > (RocketAggressive ? 0.5f : 1.0f));
+			// Aggressive mode still fires inside the normal fire window: the early shot was aimed at
+			// where the tee would have been on a path it often leaves before the blast lands, which
+			// produced rockets flying at "random" walls. Priority is applied below (rocket-first
+			// everywhere, avoid's correction dropped) without stretching the timing.
 			const bool ShouldFire = RS.m_Found && PositiveEscapeKick &&
 				((RS.m_Improves && FireWindow && (CanLandSafely || LastChance)) ||
 					Emergency);
@@ -1280,12 +1341,21 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				LogRocket(5, "FIRE rocket");
 				const bool PlayerHookUncertain = RocketPlanInput.m_Hook != 0 &&
 					(GameClient()->m_PredictedChar.HookedPlayer() >= 0 || GameClient()->m_PredictedChar.m_HookState == HOOK_FLYING);
-				const bool RocketAloneSaves = (!SmartDirectionalPriority || DangerBelow) && RS.m_Improves &&
-					RS.m_Score >= (float)CRocketSave::ms_Tuning.m_Horizon && !PlayerHookUncertain;
+				// Aggressive mode gives the rocket the save even in the two cases normal mode hands over
+				// to avoid: any danger direction, and a hook whose outcome the core simulation cannot be
+				// sure of. Avoid still runs every tick, so a rocket that turns out weaker than predicted
+				// is backed up on the very next tick.
+				// Boost mode deliberately keeps avoid's correction in the packet: the hook pulls while
+				// the blast boosts (rocket + avoid). Only when avoid has no solution at all does the
+				// rocket's full plan become the primary save and discard the leftover correction.
+				const bool RocketAloneSaves = (!RocketBoost || AvoidNoSolution) &&
+					(RocketAggressive || !SmartDirectionalPriority || DangerBelow) &&
+					RS.m_Improves && RS.m_Score >= (float)CRocketSave::ms_Tuning.m_Horizon &&
+					(RocketAggressive || !PlayerHookUncertain);
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
-					log_info("rocket", "  mode=%s aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
+					log_info("rocket", "  mode=%s aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f boost=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
 						RocketAloneSaves ? "rocket-first" : "rocket+avoid", RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y,
-						RS.m_Kick, RS.m_EscapeKick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
+						RS.m_Kick, RS.m_EscapeKick, RS.m_BoostKick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
 
 				// A full-window rocket plan is authoritative: discard avoid's movement/hook change for
 				// this packet. A partial plan deliberately keeps them, producing rocket+avoid. Every next
@@ -1313,10 +1383,11 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				m_aAntiVoidRocketReleasePending[Dummy] = true;
 				m_aAntiVoidRocketLastFireTick[Dummy] = RocketTick;
 
-				// Honour the user's cadence. Multiple grenades in flight are intentional here: the next
+				// Honour the user's cadence; aggressive mode always refires as soon as the grenade is
+				// ready again (cooldown 1). Multiple grenades in flight are intentional here: the next
 				// shot is re-simulated from the newest predicted state and gives the requested aggressive
 				// rocket-first behaviour instead of silently stretching a 1-tick cooldown to flight time.
-				m_aAntiVoidRocketCooldown[Dummy] = g_Config.m_TcAntiVoidRocketCooldown;
+				m_aAntiVoidRocketCooldown[Dummy] = RocketAggressive ? 1 : g_Config.m_TcAntiVoidRocketCooldown;
 			}
 			else if(!RS.m_Found)
 			{

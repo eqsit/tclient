@@ -37,6 +37,9 @@ void CAvoidFreeze::OnReset()
 	m_WasOverriding = false;
 	m_OverrideHook = 0;
 	m_BlockHeldHookUntilRelease = false;
+	m_AutoHookHeld = false;
+	m_AutoHookHeldSinceTick = -1;
+	m_AutoHookReleasedTick = -1;
 	m_LogAction = -1;
 }
 
@@ -159,6 +162,14 @@ void CAvoidFreeze::ApplyOverride()
 	m_InputBeforeOverride = Current;
 	m_HasInputBeforeOverride = true;
 
+	// Rocket Aggressive mode: hooks are the absolute last resort (see below) and any hook avoid throws
+	// itself is released as soon as the tee no longer needs it (the short-hook block further down).
+	const bool HooksLastResort = g_Config.m_TcAntiVoidRocket >= CControls::ANTI_VOID_ROCKET_AGGRESSIVE;
+	// Boost option (normal rocket mode): hooks save at maximum there. An escape that throws a hook wins
+	// over an equally safe escape that does not, so the tee is really pulled out by the hook while the
+	// rocket adds its speed on top. Aggressive mode keeps its minimum-hook policy instead.
+	const bool PreferHookEscapes = g_Config.m_TcAntiVoidRocketBoost != 0 && !HooksLastResort;
+
 	int SimTicks = g_Config.m_KxBafTicks;
 	if(SimTicks < 1)
 		SimTicks = 1;
@@ -209,6 +220,8 @@ void CAvoidFreeze::ApplyOverride()
 				pInput->m_Hook = 0;
 			m_WasOverriding = false;
 		}
+		m_AutoHookHeld = false;
+		m_AutoHookHeldSinceTick = -1;
 		return;
 	}
 
@@ -233,7 +246,39 @@ void CAvoidFreeze::ApplyOverride()
 		m_WasOverriding = true;
 		m_OverrideHook = 0;
 		m_BlockHeldHookUntilRelease = HookKeyHeld;
+		m_AutoHookHeld = false;
+		m_AutoHookHeldSinceTick = -1;
 		return;
+	}
+
+	// ---- Short auto-hook (rocket Aggressive) -------------------------------------------------------
+	// A hook avoid threw ITSELF must not turn into a long visible hang. Ownership is dropped as soon as
+	// the player takes the hook over or the hook is gone, and it is let go the moment the tee does not
+	// need it any more:
+	//   * the path WITHOUT the hook stays safe for at least half of the prediction window, or
+	//   * the hook has already been held for a while and letting go does not freeze us right away.
+	// The player's own hook is never touched, and while letting go would put the tee into danger within
+	// a couple of ticks the hook is kept — survival still comes first.
+	if(m_AutoHookHeld && (HookKeyHeld || pGame->m_PredictedChar.m_HookState == HOOK_IDLE || !HooksLastResort))
+	{
+		m_AutoHookHeld = false;
+		m_AutoHookHeldSinceTick = -1;
+	}
+	const bool ShortHookRelease = m_AutoHookHeld &&
+		(DangerWithoutHook == 0 ||
+			DangerWithoutHook >= maximum(6, SimTicks / 2) ||
+			(PredTick - m_AutoHookHeldSinceTick >= 25 && DangerWithoutHook > 4));
+	if(ShortHookRelease)
+	{
+		LogDecision(9, "short hook: releasing our hook, the path without it is safe again", DangerWithoutHook, nullptr, 0);
+		pInput->m_Hook = 0;
+		m_AutoHookHeld = false;
+		m_AutoHookHeldSinceTick = -1;
+		m_AutoHookReleasedTick = PredTick;
+		// The override hook is gone; clear the bookkeeping so the safe branch does not retract it again
+		// and the search below cannot start a fresh one in the same packet.
+		m_OverrideHook = 0;
+		m_WasOverriding = false;
 	}
 
 	// Danger exists even without hook — use brute-force to find an alternative.
@@ -241,8 +286,20 @@ void CAvoidFreeze::ApplyOverride()
 
 	const bool AllowDir = g_Config.m_KxBafDirection != 0;
 	const bool AllowJump = g_Config.m_KxBafJump != 0;
+	// Hooks stay available in every rocket mode: they are the LAST RESORT, not the first choice. The
+	// brute force below walks the no-hook combinations first and a hook escape only wins when it
+	// survives strictly longer, so avoid throws a hook only when nothing else gets out. In rocket
+	// Aggressive mode that is exactly the wanted "minimum hooks, maximum rocket": while the rocket
+	// covers the danger its plan is applied and avoid's hook throw for the tick is discarded with the
+	// rest of its override (DiscardOverrideForRocket).
 	const bool AllowHook = g_Config.m_KxBafHook != 0;
 	const bool AllowAim = g_Config.m_KxBafAim != 0;
+	// In aggressive mode (HooksLastResort, defined above) the no-hook escape is preferred and the hook
+	// combinations are only simulated when the tee cannot get out without one. On a tick where the
+	// short-hook release just happened the hook candidates are dropped entirely, and for a few ticks
+	// after a release as well, so the hook really disappears instead of flickering.
+	const bool AutoHookGrace = m_AutoHookReleasedTick >= 0 && (PredTick - m_AutoHookReleasedTick) < 4;
+	const bool HookSearchAllowed = AllowHook && !ShortHookRelease && !AutoHookGrace;
 
 	int aDirs[3] = {0, 0, 0};
 	int DirCount = 1;
@@ -273,7 +330,7 @@ void CAvoidFreeze::ApplyOverride()
 
 	int aHooks[2] = {0, 0};
 	int HookCount = 1;
-	if(AllowHook)
+	if(HookSearchAllowed)
 	{
 		aHooks[0] = 0;
 		aHooks[1] = 1;
@@ -379,6 +436,8 @@ void CAvoidFreeze::ApplyOverride()
 	CNetObj_PlayerInput BestInput = Current;
 	int BestSurvival = -1;
 	int BestDiff = 999;
+	// Best result reached by the combinations that do NOT throw a hook (used by HooksLastResort).
+	int BestNoHookSurvival = -1;
 
 	for(int di = 0; di < DirCount && !Done; di++)
 	{
@@ -386,6 +445,12 @@ void CAvoidFreeze::ApplyOverride()
 		{
 			for(int hi = 0; hi < HookCount && !Done; hi++)
 			{
+				// Aggressive rocket mode: do not even test an auto-thrown hook while a no-hook escape
+				// still survives the whole window. The player's own held hook is not an auto-throw and
+				// is never skipped by this.
+				if(HooksLastResort && HookSearchAllowed && aHooks[hi] != 0 && BestNoHookSurvival >= SimTicks)
+					continue;
+
 				// Releasing hook makes aim irrelevant to physics. Keep iterating every aim below so
 				// InputDiff and the original tie-breaking order stay bit-for-bit unchanged, but reuse
 				// the one simulation result for all of them.
@@ -418,10 +483,22 @@ void CAvoidFreeze::ApplyOverride()
 					}
 					const int Survival = (Danger == 0) ? SimTicks : Danger - 1;
 					const int Diff = InputDiff(Current, Test);
+					if(aHooks[hi] == 0 && Survival > BestNoHookSurvival)
+						BestNoHookSurvival = Survival;
 
-					if(BestSurvival < 0 ||
-						Survival > BestSurvival ||
-						(Survival == BestSurvival && Diff < BestDiff))
+					// Boost mode: a hook escape beats an equally safe non-hook escape, so the hooks do
+					// the saving while the rocket is free to add speed.
+					const bool ThrowsHook = aHooks[hi] != 0 && Current.m_Hook == 0;
+					const bool BestThrowsHook = BestInput.m_Hook != 0 && Current.m_Hook == 0;
+					bool Better;
+					if(PreferHookEscapes && Survival == BestSurvival && Survival >= SimTicks &&
+						ThrowsHook != BestThrowsHook)
+						Better = ThrowsHook;
+					else
+						Better = BestSurvival < 0 ||
+							Survival > BestSurvival ||
+							(Survival == BestSurvival && Diff < BestDiff);
+					if(Better)
 					{
 						BestSurvival = Survival;
 						BestDiff = Diff;
@@ -430,7 +507,9 @@ void CAvoidFreeze::ApplyOverride()
 						// Every combo changes at least one field (the exact current input is skipped), so
 						// a full survivor at diff 1 is optimal: later combos can at best match survival
 						// with a larger diff. Stop the brute force right here.
-						if(BestSurvival >= SimTicks && BestDiff <= 1)
+						// Boost mode still has to look at the hook combinations before it can stop, so
+						// the early exit only fires once a hook escape is the best full survivor.
+						if(BestSurvival >= SimTicks && BestDiff <= 1 && (!PreferHookEscapes || BestThrowsHook))
 							Done = true;
 					}
 				}
@@ -455,6 +534,13 @@ void CAvoidFreeze::ApplyOverride()
 		m_OverrideHook = BestInput.m_Hook;
 		if(HookKeyHeld && Current.m_Hook != 0 && BestInput.m_Hook == 0)
 			m_BlockHeldHookUntilRelease = true;
+		// Remember when avoid threw a hook of its own (the player is not holding the key): the
+		// short-hook logic above then lets go of it as soon as the tee can do without it.
+		if(HooksLastResort && BestInput.m_Hook != 0 && Current.m_Hook == 0)
+		{
+			m_AutoHookHeld = true;
+			m_AutoHookHeldSinceTick = PredTick;
+		}
 
 		// Apply aim: silent (only patched into the sent packet by CControls)
 		// or visible (move the local mouse/input as well). While the player is holding the hook key the
@@ -506,4 +592,8 @@ void CAvoidFreeze::DiscardOverrideForRocket()
 	m_WasOverriding = false;
 	m_OverrideHook = 0;
 	m_BlockHeldHookUntilRelease = false;
+	// The hook avoid had prepared never went out (the rocket saved on its own), so there is nothing
+	// left for the short-hook logic to release.
+	m_AutoHookHeld = false;
+	m_AutoHookHeldSinceTick = -1;
 }

@@ -300,7 +300,7 @@ void CBinds::SetDefaults()
 	Bind(KEY_C, "toggle tc_hook_aim 0 1");
 	Bind(KEY_E, "tc_weapon_spin_toggle");
 	Bind(KEY_F, "tc_anti_void_toggle");
-	Bind(KEY_G, "toggle tc_anti_void_rocket 0 1");
+	Bind(KEY_G, "tc_anti_void_rocket_mode_next");
 	Bind(KEY_H, "toggle cl_dummy_hammer 0 1");
 	Bind(KEY_S, "+showhookcoll");
 	Bind(KEY_X, "toggle cl_dummy 0 1");

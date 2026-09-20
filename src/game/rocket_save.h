@@ -33,6 +33,9 @@ struct CRocketSaveCfg
 	bool m_DeepFreeze = true;
 	bool m_LiveFreeze = true;
 	bool m_Death = true;
+	// Prefer, among shots that save the tee across the whole horizon anyway, the one whose blast also
+	// adds the most speed along the direction of travel (a grenade-jump style "save + boost").
+	bool m_Boost = false;
 };
 
 struct CRocketSaveTuning
@@ -55,6 +58,7 @@ struct CRocketSaveAim
 	vec2 m_Blast = vec2(0.0f, 0.0f); // where that grenade goes off
 	float m_Kick = 0.0f; // px/tick the blast adds to our velocity
 	float m_EscapeKick = 0.0f; // component of that kick directly away from predicted danger
+	float m_BoostKick = 0.0f; // component of that kick along the direction of travel (speed gain)
 	float m_BlastTicks = 0.0f; // ticks the grenade needs to fly there and detonate (this is what the outcome sim now waits for)
 	// What doing nothing is worth in the same simulation. A shot is only preferred when its score beats
 	// this, so blasts that freeze the tee sooner than doing nothing are not chosen. In an emergency
@@ -67,8 +71,9 @@ class CRocketSave
 {
 public:
 	// Best direction to fire in RIGHT NOW. Fallback is the direction the caller already had in mind (the
-	// danger it found), which is also what the result is scored against.
-	static CRocketSaveAim BestAim(CCollision *pCollision, const CCharacterCore &Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, vec2 Fallback);
+	// danger it found), which is also what the result is scored against. Rays > 0 overrides the tuning
+	// default: the aggressive rocket mode searches a denser fan so more real detonations are found.
+	static CRocketSaveAim BestAim(CCollision *pCollision, const CCharacterCore &Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, vec2 Fallback, int Rays = 0);
 
 	static CRocketSaveTuning ms_Tuning;
 };
