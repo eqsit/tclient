@@ -142,6 +142,15 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	Sim.Init(nullptr, pCollision);
 	Sim.SetHookedPlayer(-1);
 
+	// What doing NOTHING is worth in the same simulation: the tee run forward with no blast at all
+	// (a blast time past the horizon never gets applied). A shot is only accepted when it beats this.
+	// The old code fired any direction with a score above zero, which included shots whose own
+	// simulation froze a few ticks later — occasionally earlier than doing nothing, i.e. a blast that
+	// pushed the tee into freeze instead of out of it.
+	Out.m_BaseScore = Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Sim.m_Pos, Cfg.m_Lifetime);
+	if(Out.m_BaseScore >= (float)ms_Tuning.m_Horizon)
+		return Out; // nothing predicted to happen even without a rocket: no shot needed
+
 	// A candidate is only worth anything when the grenade actually detonates against something solid close
 	// enough to move us: a ceiling, a floor, a wall. That is the whole point of the rocket save — the blast
 	// needs a surface to push off. The minimum kick is what the tee gains in one tick of air control, so a
@@ -181,7 +190,6 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 		Out.m_Score = Out.m_PlainScore;
 		Out.m_Blast = Blast;
 		Out.m_Kick = Kick;
-		Out.m_Found = Out.m_PlainScore > 0.0f; // the plain aim only counts if it hits something solid
 	}
 
 	// Where are we actually going? The shot has to come from the direction of travel — that is what makes the
@@ -208,8 +216,9 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			Out.m_Blast = Blast;
 			Out.m_Kick = Kick;
 			Out.m_BlastTicks = BlastTicks;
-			Out.m_Found = true;
 		}
 	}
+	// Only a shot that ends the simulation better than no shot at all is worth taking.
+	Out.m_Found = Out.m_Score > Out.m_BaseScore;
 	return Out;
 }

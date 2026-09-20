@@ -1058,11 +1058,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	const int BafDangerTick = GameClient()->m_AvoidFreeze.DangerTick();
 	const int EffectiveDangerTick = DangerTick >= 0 ? (BafDangerTick > 0 ? minimum(DangerTick, BafDangerTick) : DangerTick) : BafDangerTick;
 
-	// When only avoid sees the danger, our own path has no distance to gate on (DangerDist stays 1e9)
-	// and the old time gate fired at EffectiveDangerTick <= 2 — which the logs show is always too late:
-	// the grenade still needs to fly to its surface and detonate, so the freeze lands first (every
-	// GOT FROZEN line had sinceFire=1-2). Reuse the same speed-scaled lead the distance gate uses,
-	// expressed in ticks, so the shot gets its flight time before the danger arrives.
+	// When only avoid sees the danger, our own path has no distance to gate on (DangerDist stays 1e9),
+	// so take the grenade early for the weapon switch. The actual fire moment is decided by the chosen
+	// shot's own flight time further down, not by a fixed lead.
 	const float AvoidLeadTicks = std::clamp((R + FireDist + FireLead) / maximum(Speed, 4.0f), 6.0f, 14.0f);
 	const bool AvoidOnlyDanger = DangerTick < 0 && BafDangerTick > 0;
 	const bool AvoidDangerInArm = AvoidOnlyDanger && (float)EffectiveDangerTick <= AvoidLeadTicks + 3.0f;
@@ -1179,12 +1177,19 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				if(AimMs >= 2.0f)
 					log_info("rocket", "PROFILE: BestAim took %.1f ms", AimMs);
 			}
-			if(RS.m_Found)
+			// Fire as late as possible, but early enough for the blast to land: the danger countdown has
+			// to be inside the chosen shot's own flight time plus a small margin. The old distance lead
+			// started firing 6-14 ticks early, which is where the empty shots at spots the player was
+			// never going to fall from came from. The aim search has already rejected shots that cannot
+			// land in time, so this only decides the moment.
+			const int FireDeadline = round_to_int(RS.m_BlastTicks) + 2;
+			const bool InTime = EffectiveDangerTick > 0 && EffectiveDangerTick <= FireDeadline;
+			if(RS.m_Found && (InTime || Emergency))
 			{
 				LogRocket(5, "FIRE rocket");
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
-					log_info("rocket", "  aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f flight=%.0f score=%.1f plain=%.1f",
-						RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y, RS.m_Kick, RS.m_BlastTicks, RS.m_Score, RS.m_PlainScore);
+					log_info("rocket", "  aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
+						RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y, RS.m_Kick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
 
 				// The avoid's silent-aim channel patches the sent packet after this function. If it is
 				// active this tick it would overwrite the shot direction BestAim just picked, so the
@@ -1210,9 +1215,16 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				const int FlightTicks = (int)(BlastDist / 20.0f) + 3; // ~1000px/s = ~20px per tick
 				m_aAntiVoidRocketCooldown[Dummy] = maximum(g_Config.m_TcAntiVoidRocketCooldown, minimum(FlightTicks, 25));
 			}
+			else if(!RS.m_Found)
+			{
+				LogRocket(4, "skip: no shot that beats doing nothing");
+			}
 			else
 			{
-				LogRocket(4, "skip: BestAim found no solid detonation");
+				// The shot is good but the danger is still too far away for its flight time: hold the
+				// grenade and wait for the moment instead of firing at a spot the player may not even
+				// fall from.
+				LogRocket(6, "hold: shot ready, waiting for the fire moment");
 			}
 		}
 	}
