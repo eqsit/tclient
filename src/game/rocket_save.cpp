@@ -100,7 +100,14 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 	for(int i = 0; i < Ticks; ++i)
 	{
 		if(i == BlastTick)
-			Core.m_Vel += BlastForce(Core.m_Pos, Blast, Cfg); // the grenade goes off now
+		{
+			// The grenade goes off now. The game applies the explosion through CCharacter::TakeDamage,
+			// which clamps the resulting velocity with the current move restrictions (tiles can forbid
+			// moving up/down/left/right). Adding it raw here made the simulation believe in kicks the
+			// game silently zeroes — that is how shots "saving for 40 ticks" ended in a freeze 4 ticks
+			// later next to directional freeze tiles.
+			Core.m_Vel = ClampVel(Core.MoveRestrictions(), Core.m_Vel + BlastForce(Core.m_Pos, Blast, Cfg));
+		}
 		Core.m_Input = Input;
 		const vec2 Prev = Core.m_Pos;
 		Core.Tick(true);
@@ -167,8 +174,10 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			*pOutTicks = 0.0f;
 		if(!HitSolid)
 			return 0.0f;
+		// Same clamp as the real explosion (see Outcome): the kick that matters is the one that survives
+		// the move restrictions at the tee.
 		const vec2 Force = BlastForce(Sim.m_Pos, Blast, Cfg);
-		const float Kick = length(Force);
+		const float Kick = length(ClampVel(Sim.MoveRestrictions(), Sim.m_Vel + Force) - Sim.m_Vel);
 		if(pOutKick)
 			*pOutKick = Kick;
 		if(pOutTicks)
@@ -190,6 +199,7 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 		Out.m_Score = Out.m_PlainScore;
 		Out.m_Blast = Blast;
 		Out.m_Kick = Kick;
+		Out.m_Found = Out.m_PlainScore > 0.0f; // the plain aim only counts if it hits something solid
 	}
 
 	// Where are we actually going? The shot has to come from the direction of travel — that is what makes the
@@ -216,9 +226,11 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			Out.m_Blast = Blast;
 			Out.m_Kick = Kick;
 			Out.m_BlastTicks = BlastTicks;
+			Out.m_Found = true;
 		}
 	}
-	// Only a shot that ends the simulation better than no shot at all is worth taking.
-	Out.m_Found = Out.m_Score > Out.m_BaseScore;
+	// A shot that beats doing nothing is the normal case; the caller may still fire the least-bad valid
+	// shot when avoid is out of options entirely, so the two are reported separately.
+	Out.m_Improves = Out.m_Found && Out.m_Score > Out.m_BaseScore;
 	return Out;
 }

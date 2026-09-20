@@ -1128,10 +1128,15 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 
 	if(NeedRocket && (m_aAntiVoidRocketCooldown[Dummy] == 0 || Emergency))
 	{
-		LogRocket(3, Emergency ? "arm: taking the grenade (emergency, cooldown ignored)" : "arm: taking the grenade");
 		// Remember the weapon we had before the save (recorded once, kept across multiple rockets).
-		if(m_aAntiVoidRocketPrevWeapon[Dummy] < 0)
+		const bool FirstArm = m_aAntiVoidRocketPrevWeapon[Dummy] < 0;
+		if(FirstArm)
+		{
 			m_aAntiVoidRocketPrevWeapon[Dummy] = GameClient()->m_PredictedChar.m_ActiveWeapon;
+			// Log the arm only once per save: re-arming every tick while holding for the fire moment
+			// would otherwise alternate arm/hold lines and flood the log.
+			LogRocket(3, Emergency ? "arm: taking the grenade (emergency, cooldown ignored)" : "arm: taking the grenade");
+		}
 
 		// Arm: switch to the grenade now so it is ready by the fire moment.
 		m_aInputData[Dummy].m_WantedWeapon = WEAPON_GRENADE + 1;
@@ -1184,7 +1189,11 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			// land in time, so this only decides the moment.
 			const int FireDeadline = round_to_int(RS.m_BlastTicks) + 2;
 			const bool InTime = EffectiveDangerTick > 0 && EffectiveDangerTick <= FireDeadline;
-			if(RS.m_Found && (InTime || Emergency))
+			// A normal shot has to beat doing nothing and have time to land. In an emergency (avoid has
+			// no solution at all and the danger is on top of us) fire the least-bad valid shot anyway —
+			// the simulation's small freeze-tick estimates are not reliable enough to skip the last
+			// chance, which is where the "lots of freezes" came from.
+			if(RS.m_Found && ((RS.m_Improves && InTime) || Emergency))
 			{
 				LogRocket(5, "FIRE rocket");
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
@@ -1217,7 +1226,11 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			}
 			else if(!RS.m_Found)
 			{
-				LogRocket(4, "skip: no shot that beats doing nothing");
+				LogRocket(4, "skip: no solid detonation");
+			}
+			else if(!RS.m_Improves)
+			{
+				LogRocket(7, "skip: no shot beats doing nothing");
 			}
 			else
 			{

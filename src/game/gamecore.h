@@ -273,6 +273,11 @@ public:
 	bool m_LiveFrozen;
 	CTuningParams m_Tuning;
 
+	// Movement restrictions the last Tick computed from the tiles at the tee. The game clamps the
+	// explosion velocity with these in CCharacter::TakeDamage; the rocket simulation reads the same
+	// value so it does not believe in kicks the game silently zeroes.
+	int MoveRestrictions() const { return m_MoveRestrictions; }
+
 private:
 	CTeamsCore *m_pTeams;
 	int m_MoveRestrictions;

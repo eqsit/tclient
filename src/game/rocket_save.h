@@ -55,9 +55,11 @@ struct CRocketSaveAim
 	vec2 m_Blast = vec2(0.0f, 0.0f); // where that grenade goes off
 	float m_Kick = 0.0f; // px/tick the blast adds to our velocity
 	float m_BlastTicks = 0.0f; // ticks the grenade needs to fly there and detonate (this is what the outcome sim now waits for)
-	// What doing nothing is worth in the same simulation. A shot is only accepted when its score beats
-	// this, so blasts that freeze the tee sooner than doing nothing are never fired.
+	// What doing nothing is worth in the same simulation. A shot is only preferred when its score beats
+	// this, so blasts that freeze the tee sooner than doing nothing are not chosen. In an emergency
+	// (avoid has no solution at all) the least-bad valid shot is fired even without an improvement.
 	float m_BaseScore = 0.0f;
+	bool m_Improves = false; // the chosen shot beats doing nothing in the simulation
 };
 
 class CRocketSave
