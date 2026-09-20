@@ -31,17 +31,25 @@ static constexpr float ROCKET_CLEARANCE_MAX = 200.0f;
 // weak to change anything, and firing would only waste the grenade.
 static constexpr float ROCKET_MIN_KICK = 4.0f;
 
+// The game tick is SERVER_TICK_SPEED (50) per second. The grenade's flight time and the tee simulation
+// both run on game ticks, so the two are converted with this.
+static constexpr float TICK_SECONDS = 1.0f / 50.0f;
+
 // Fly the grenade the way the game does and return where it goes off. Trajectory is the projectile maths
 // from gamecore (CalcPos); detonation is the first SOLID tile it touches. *pHitSolid says whether it hit
 // anything at all — a grenade that burns out in mid-air, or sails through freeze (freeze is not solid, so a
 // rocket aimed straight into it just passes through), gives no push worth having and is not a candidate.
-static vec2 BlastPos(CCollision *pCollision, vec2 From, vec2 Dir, const CRocketSaveCfg &Cfg, bool *pHitSolid)
+// *pOutTime receives the seconds it took to get there: the blast cannot happen before the grenade has
+// flown, and the caller has to wait that long before the explosion force exists.
+static vec2 BlastPos(CCollision *pCollision, vec2 From, vec2 Dir, const CRocketSaveCfg &Cfg, bool *pHitSolid, float *pOutTime)
 {
 	const vec2 Start = From + Dir * 28.0f * 0.75f; // the game spawns the projectile just outside the tee
 	vec2 Prev = Start;
 	const float Step = 1.0f / 200.0f; // fine enough that a tile is never skipped at grenade speed
 	if(pHitSolid)
 		*pHitSolid = false;
+	if(pOutTime)
+		*pOutTime = Cfg.m_Lifetime;
 	for(float t = Step; t <= Cfg.m_Lifetime; t += Step)
 	{
 		const vec2 P = CalcPos(Start, Dir, Cfg.m_Curvature, Cfg.m_Speed, t);
@@ -49,6 +57,8 @@ static vec2 BlastPos(CCollision *pCollision, vec2 From, vec2 Dir, const CRocketS
 		{
 			if(pHitSolid)
 				*pHitSolid = true;
+			if(pOutTime)
+				*pOutTime = t;
 			return Prev; // detonates against the surface it just hit
 		}
 		Prev = P;
@@ -71,15 +81,23 @@ static vec2 BlastForce(vec2 TeePos, vec2 Blast, const CRocketSaveCfg &Cfg)
 	return ForceDir * Dmg * 2.0f;
 }
 
-// Run the tee forward and score how the situation ends. Higher is better: a run that never touches freeze
-// scores by how much room it keeps around it, a run that freezes scores by how long it lasted.
-static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks)
+// Run the tee forward and score how the situation ends. The blast does not exist yet when the shot is
+// fired: the tee keeps moving WITHOUT the explosion for the ticks the grenade needs to fly to its surface,
+// and the force is added on the tick it actually detonates, measured from where the tee is THEN (that is
+// how CGameWorld::CreateExplosion works). Applying the force at tick 0 (the old behaviour) rated
+// last-moment shots as saves even though the grenade landed after the freeze. Higher is better: a run
+// that never touches freeze scores by how much room it keeps around it, a run that freezes scores by how
+// long it lasted.
+static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks, vec2 Blast, float BlastTime)
 {
 	Core.Init(nullptr, pCollision);
 	Core.SetHookedPlayer(-1);
+	const int BlastTick = std::clamp(round_to_int(BlastTime / TICK_SECONDS), 0, Ticks);
 	float Worst = 1e9f;
 	for(int i = 0; i < Ticks; ++i)
 	{
+		if(i == BlastTick)
+			Core.m_Vel += BlastForce(Core.m_Pos, Blast, Cfg); // the grenade goes off now
 		Core.m_Input = Input;
 		const vec2 Prev = Core.m_Pos;
 		Core.Tick(true);
@@ -120,24 +138,29 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// enough to move us: a ceiling, a floor, a wall. That is the whole point of the rocket save — the blast
 	// needs a surface to push off. The minimum kick is what the tee gains in one tick of air control, so a
 	// shot that barely tickles it is not treated as a save.
-	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick) -> float {
+	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick, float *pOutTicks) -> float {
 		bool HitSolid = false;
-		const vec2 Blast = BlastPos(pCollision, Sim.m_Pos, Dir, Cfg, &HitSolid);
+		float BlastTime = Cfg.m_Lifetime;
+		const vec2 Blast = BlastPos(pCollision, Sim.m_Pos, Dir, Cfg, &HitSolid, &BlastTime);
 		if(pOutBlast)
 			*pOutBlast = Blast;
 		if(pOutKick)
 			*pOutKick = 0.0f;
+		if(pOutTicks)
+			*pOutTicks = 0.0f;
 		if(!HitSolid)
 			return 0.0f;
 		const vec2 Force = BlastForce(Sim.m_Pos, Blast, Cfg);
 		const float Kick = length(Force);
 		if(pOutKick)
 			*pOutKick = Kick;
+		if(pOutTicks)
+			*pOutTicks = BlastTime / TICK_SECONDS;
 		if(Kick < ROCKET_MIN_KICK)
 			return 0.0f;
-		CCharacterCore Kicked = Sim;
-		Kicked.m_Vel += Force;
-		return Outcome(pCollision, Kicked, Input, Cfg, ms_Tuning.m_Horizon);
+		// The outcome runs with the real delay before the blast appears, so a shot whose grenade lands
+		// after the danger no longer scores as a save.
+		return Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Blast, BlastTime);
 	};
 
 	// What the plain "shoot at the danger" aim would achieve, as the baseline to beat.
@@ -146,7 +169,7 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 		vec2 Blast;
 		float Kick = 0.0f;
 		Out.m_Dir = normalize(Fallback);
-		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick);
+		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick, &Out.m_BlastTicks);
 		Out.m_Score = Out.m_PlainScore;
 		Out.m_Blast = Blast;
 		Out.m_Kick = Kick;
@@ -166,7 +189,8 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			continue; // behind us: firing there would shove us further into what we are flying at
 		vec2 Blast;
 		float Kick = 0.0f;
-		const float Score = Try(Dir, &Blast, &Kick);
+		float BlastTicks = 0.0f;
+		const float Score = Try(Dir, &Blast, &Kick, &BlastTicks);
 		// Ties go to the harder kick, i.e. to the shot that detonates against the NEAREST solid surface:
 		// blast force falls off with distance, so the closest wall, floor or ceiling throws us the furthest.
 		if(Score > Out.m_Score || (Score > 0.0f && Score >= Out.m_Score - 0.5f && Kick > Out.m_Kick))
@@ -175,6 +199,7 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			Out.m_Dir = Dir;
 			Out.m_Blast = Blast;
 			Out.m_Kick = Kick;
+			Out.m_BlastTicks = BlastTicks;
 			Out.m_Found = true;
 		}
 	}

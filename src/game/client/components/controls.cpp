@@ -1058,8 +1058,18 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	const int BafDangerTick = GameClient()->m_AvoidFreeze.DangerTick();
 	const int EffectiveDangerTick = DangerTick >= 0 ? (BafDangerTick > 0 ? minimum(DangerTick, BafDangerTick) : DangerTick) : BafDangerTick;
 
-	const bool DangerInArm = (EffectiveDangerTick > 0 && (EffectiveDangerTick <= 6 || DangerDist <= R + FireDist + LeadDist)) || AvoidNoSolution;
-	const bool DangerInFire = (EffectiveDangerTick > 0 && (DangerDist <= R + FireDist + FireLead || EffectiveDangerTick <= 2)) || AvoidNoSolution;
+	// When only avoid sees the danger, our own path has no distance to gate on (DangerDist stays 1e9)
+	// and the old time gate fired at EffectiveDangerTick <= 2 — which the logs show is always too late:
+	// the grenade still needs to fly to its surface and detonate, so the freeze lands first (every
+	// GOT FROZEN line had sinceFire=1-2). Reuse the same speed-scaled lead the distance gate uses,
+	// expressed in ticks, so the shot gets its flight time before the danger arrives.
+	const float AvoidLeadTicks = std::clamp((R + FireDist + FireLead) / maximum(Speed, 4.0f), 6.0f, 14.0f);
+	const bool AvoidOnlyDanger = DangerTick < 0 && BafDangerTick > 0;
+	const bool AvoidDangerInArm = AvoidOnlyDanger && (float)EffectiveDangerTick <= AvoidLeadTicks + 3.0f;
+	const bool AvoidDangerInFire = AvoidOnlyDanger && (float)EffectiveDangerTick <= AvoidLeadTicks;
+
+	const bool DangerInArm = (EffectiveDangerTick > 0 && (EffectiveDangerTick <= 6 || DangerDist <= R + FireDist + LeadDist)) || AvoidNoSolution || AvoidDangerInArm;
+	const bool DangerInFire = (EffectiveDangerTick > 0 && (DangerDist <= R + FireDist + FireLead || EffectiveDangerTick <= 2)) || AvoidNoSolution || AvoidDangerInFire;
 	// Genuinely about to be hit and nothing else saves us: ignore the flight cooldown and fire whatever
 	// we can. The extra blast can only add velocity; waiting for the previous one is pointless here.
 	const bool Emergency = AvoidNoSolution && EffectiveDangerTick > 0 && EffectiveDangerTick <= 2;
@@ -1164,8 +1174,8 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			{
 				LogRocket(5, "FIRE rocket");
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
-					log_info("rocket", "  aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f score=%.1f plain=%.1f",
-						RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y, RS.m_Kick, RS.m_Score, RS.m_PlainScore);
+					log_info("rocket", "  aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f flight=%.0f score=%.1f plain=%.1f",
+						RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y, RS.m_Kick, RS.m_BlastTicks, RS.m_Score, RS.m_PlainScore);
 
 				// The avoid's silent-aim channel patches the sent packet after this function. If it is
 				// active this tick it would overwrite the shot direction BestAim just picked, so the

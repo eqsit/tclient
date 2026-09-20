@@ -54,6 +54,7 @@ struct CRocketSaveAim
 	float m_PlainScore = 0.0f; // ...compared to firing straight at the danger, for the log
 	vec2 m_Blast = vec2(0.0f, 0.0f); // where that grenade goes off
 	float m_Kick = 0.0f; // px/tick the blast adds to our velocity
+	float m_BlastTicks = 0.0f; // ticks the grenade needs to fly there and detonate (this is what the outcome sim now waits for)
 };
 
 class CRocketSave
