@@ -1085,19 +1085,14 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// rocket firing at the same tick the freeze already happened).
 	const float FireLead = std::clamp(Speed * 6.0f, 48.0f, 260.0f);
 
-	// The ported Kinetix avoid gets first say: while it can save us on its own, leave the grenade alone.
+	// Avoid still runs before us so its movement/hook correction can be included in the rocket simulation,
+	// but it no longer vetoes a shot. Rocket is the primary save: avoid remains active as a simultaneous
+	// movement fallback and is the sole fallback when no useful rocket exists.
 	const bool AvoidSaves = GameClient()->m_AvoidFreeze.WouldSave();
 	// ...but when avoid reports that NOTHING survives, the rocket is the last resort: fire as soon as
 	// the grenade is ready and BestAim has a valid detonation, even if the rocket's own path prediction
 	// does not see the danger (avoid's model and the core simulation sometimes disagree).
 	const bool AvoidNoSolution = GameClient()->m_AvoidFreeze.NoSolution();
-	// The lightweight rocket core has no moving player world. A hook already attached to a tee, or one
-	// still flying and able to attach, therefore has an untrustworthy trajectory here; let the full-world
-	// avoid own that situation instead of firing from a fictitious detached-hook path. If avoid releases
-	// the hook in the outgoing input, the rocket may act normally on that released path.
-	const bool HookNeedsPlayerWorld = m_aInputData[Dummy].m_Hook != 0 &&
-		(GameClient()->m_PredictedChar.HookedPlayer() >= 0 || GameClient()->m_PredictedChar.m_HookState == HOOK_FLYING);
-
 	// avoid may see the danger while our own core prediction does not (different models). Merge its
 	// tick into the time gates; the distance gates still use our own path.
 	const int BafDangerTick = GameClient()->m_AvoidFreeze.DangerTick();
@@ -1123,7 +1118,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// grenade). A freeze with nothing solid around it would just swallow the grenade, so the weapon
 	// is not even taken in that case. BestAim does the precise check at fire time.
 	bool SolidWithinBlast = false;
-	for(int i = 0; DangerInArm && !HookNeedsPlayerWorld && i < 16 && !SolidWithinBlast; i++)
+	for(int i = 0; DangerInArm && i < 16 && !SolidWithinBlast; i++)
 	{
 		const vec2 Dir = direction((float)i / 16.0f * 2.0f * pi);
 		vec2 Hit;
@@ -1131,7 +1126,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			SolidWithinBlast = true;
 	}
 
-	const bool NeedRocket = DangerInArm && SolidWithinBlast && !AvoidSaves && !HookNeedsPlayerWorld;
+	const bool NeedRocket = DangerInArm && SolidWithinBlast;
 
 	// Use the PREDICTED active weapon (updates in ~1 tick, no ping wait) to know when the grenade is really in hand.
 	const bool GrenadeReady = GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_GRENADE;
@@ -1176,11 +1171,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 
 	if(DangerInArm)
 	{
-		if(HookNeedsPlayerWorld)
-			LogRocket(9, "suppressed: player-interactive hook is owned by avoid");
-		else if(AvoidSaves)
-			LogRocket(1, "suppressed: avoid applied a save this tick");
-		else if(!SolidWithinBlast)
+		if(!SolidWithinBlast)
 			LogRocket(2, "skip: no solid surface within blast reach");
 	}
 	else if(m_aAntiVoidRocketLogState[Dummy] > 0)
@@ -1244,27 +1235,28 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				if(AimMs >= 2.0f)
 					log_info("rocket", "PROFILE: BestAim took %.1f ms", AimMs);
 			}
-			// Fire as late as possible, but early enough for the blast to land: the danger countdown has
-			// to be inside the chosen shot's own flight time plus a small margin. The old distance lead
-			// started firing 6-14 ticks early, which is where the empty shots at spots the player was
-			// never going to fall from came from. The aim search has already rejected shots that cannot
-			// land in time, so this only decides the moment.
-			const int FireDeadline = round_to_int(RS.m_BlastTicks) + 2;
-			const bool InTime = EffectiveDangerTick > 0 && EffectiveDangerTick <= FireDeadline;
-			// A normal shot has to beat doing nothing and have time to land. In an emergency (avoid has
-			// no solution at all and the danger is on top of us) fire the least-bad valid shot anyway —
-			// the simulation's small freeze-tick estimates are not reliable enough to skip the last
-			// chance, which is where the "lots of freezes" came from.
-			if(RS.m_Found && ((RS.m_Improves && InTime) || Emergency))
+			// Fire early enough that the explosion exists before the predicted freeze. The previous gate
+			// did the reverse: it waited until dangerTick <= flight+2, which routinely sent a one-tick
+			// grenade one tick before freeze. Start the burst up to six ticks before the latest safe
+			// moment, then keep firing at the configured cadence while danger persists.
+			const int FlightTicks = (int)std::ceil(RS.m_BlastTicks);
+			const bool FireWindow = EffectiveDangerTick > 0 && EffectiveDangerTick <= FlightTicks + 6;
+			const bool CanLandSafely = EffectiveDangerTick > FlightTicks + 1;
+			const bool LastChance = EffectiveDangerTick > 0 && !CanLandSafely;
+			if(RS.m_Found && ((RS.m_Improves && FireWindow && CanLandSafely) || LastChance || Emergency))
 			{
 				LogRocket(5, "FIRE rocket");
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
-					log_info("rocket", "  aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
-						RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y, RS.m_Kick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
+					log_info("rocket", "  aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
+						RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y, RS.m_Kick, RS.m_EscapeKick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
 
-				// The avoid's silent-aim channel patches the sent packet after this function. If it is
-				// active this tick it would overwrite the shot direction BestAim just picked, so the
-				// rocket's aim wins for the shot.
+				// Rocket aim wins only for the shot packet. If avoid tried to launch a fresh hook in the
+				// same packet, suppress that launch: otherwise the hook is launched along the rocket aim
+				// instead of the direction avoid simulated. Existing attached/flying hooks are untouched,
+				// so movement and hook can still combine with the blast.
+				if(m_AvoidAimActive && m_aInputData[Dummy].m_Hook != 0 &&
+					GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE)
+					m_aInputData[Dummy].m_Hook = 0;
 				m_AvoidAimActive = false;
 
 				const vec2 Aim = normalize(RS.m_Dir) * 100.0f;
@@ -1277,11 +1269,10 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				m_aAntiVoidRocketReleasePending[Dummy] = true;
 				m_aAntiVoidRocketLastFireTick[Dummy] = RocketTick;
 
-				// BestAim already measured the projectile's real flight time with the active tuning.
-				// Reconstructing it from distance at a hard-coded 1000 px/s broke on tuned servers and
-				// could allow a second shot before the first one landed.
-				const int FlightTicks = (int)std::ceil(RS.m_BlastTicks) + 2;
-				m_aAntiVoidRocketCooldown[Dummy] = maximum(g_Config.m_TcAntiVoidRocketCooldown, FlightTicks);
+				// Honour the user's cadence. Multiple grenades in flight are intentional here: the next
+				// shot is re-simulated from the newest predicted state and gives the requested aggressive
+				// rocket-first behaviour instead of silently stretching a 1-tick cooldown to flight time.
+				m_aAntiVoidRocketCooldown[Dummy] = g_Config.m_TcAntiVoidRocketCooldown;
 			}
 			else if(!RS.m_Found)
 			{

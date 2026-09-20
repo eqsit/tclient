@@ -102,14 +102,14 @@ static vec2 BlastForce(vec2 TeePos, vec2 Blast, const CRocketSaveCfg &Cfg)
 // last-moment shots as saves even though the grenade landed after the freeze. Higher is better: a run
 // that never touches freeze scores by how much room it keeps around it, a run that freezes scores by how
 // long it lasted.
-static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks, vec2 Blast, float BlastTime, float *pOutKick = nullptr)
+static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks, vec2 Blast, float BlastTime, vec2 *pOutKick = nullptr)
 {
 	Core.Init(nullptr, pCollision);
 	Core.SetHookedPlayer(-1);
 	const int BlastTick = std::clamp(round_to_int(BlastTime / TICK_SECONDS), 0, Ticks);
 	float Worst = 1e9f;
 	if(pOutKick)
-		*pOutKick = 0.0f;
+		*pOutKick = vec2(0.0f, 0.0f);
 	for(int i = 0; i < Ticks; ++i)
 	{
 		if(i == BlastTick)
@@ -122,7 +122,7 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 			const vec2 VelBefore = Core.m_Vel;
 			Core.m_Vel = ClampVel(Core.MoveRestrictions(), Core.m_Vel + BlastForce(Core.m_Pos, Blast, Cfg));
 			if(pOutKick)
-				*pOutKick = length(Core.m_Vel - VelBefore);
+				*pOutKick = Core.m_Vel - VelBefore;
 		}
 		Core.m_Input = Input;
 		const vec2 Prev = Core.m_Pos;
@@ -179,7 +179,9 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// enough to move us: a ceiling, a floor, a wall. That is the whole point of the rocket save — the blast
 	// needs a surface to push off. The minimum kick is what the tee gains in one tick of air control, so a
 	// shot that barely tickles it is not treated as a save.
-	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick, float *pOutTicks) -> float {
+	const vec2 DesiredPush = length(Fallback) > 0.001f ? -normalize(Fallback) :
+		(length(Sim.m_Vel) > 0.001f ? -normalize(Sim.m_Vel) : vec2(0.0f, -1.0f));
+	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick, float *pOutEscapeKick, float *pOutTicks) -> float {
 		bool HitSolid = false;
 		float BlastTime = Cfg.m_Lifetime;
 		const vec2 Blast = BlastPos(pCollision, Sim.m_Pos, Dir, Cfg, &HitSolid, &BlastTime);
@@ -187,6 +189,8 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			*pOutBlast = Blast;
 		if(pOutKick)
 			*pOutKick = 0.0f;
+		if(pOutEscapeKick)
+			*pOutEscapeKick = 0.0f;
 		if(pOutTicks)
 			*pOutTicks = 0.0f;
 		if(!HitSolid)
@@ -196,10 +200,13 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 		// Measure the kick where the tee actually is when the projectile arrives. Using the fire-time
 		// position here rejected shots the tee was moving into and accepted shots it had already moved
 		// away from. Outcome also applies the current move restrictions at that future tick.
-		float Kick = 0.0f;
-		const float Score = Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Blast, BlastTime, &Kick);
+		vec2 KickVec(0.0f, 0.0f);
+		const float Score = Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Blast, BlastTime, &KickVec);
+		const float Kick = length(KickVec);
 		if(pOutKick)
 			*pOutKick = Kick;
+		if(pOutEscapeKick)
+			*pOutEscapeKick = dot(KickVec, DesiredPush);
 		if(Kick < ROCKET_MIN_KICK)
 			return 0.0f;
 		return Score;
@@ -210,11 +217,13 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	{
 		vec2 Blast;
 		float Kick = 0.0f;
+		float EscapeKick = 0.0f;
 		Out.m_Dir = normalize(Fallback);
-		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick, &Out.m_BlastTicks);
+		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick, &EscapeKick, &Out.m_BlastTicks);
 		Out.m_Score = Out.m_PlainScore;
 		Out.m_Blast = Blast;
 		Out.m_Kick = Kick;
+		Out.m_EscapeKick = EscapeKick;
 		Out.m_Found = Out.m_PlainScore > 0.0f; // the plain aim only counts if it hits something solid
 	}
 
@@ -231,16 +240,31 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			continue; // behind us: firing there would shove us further into what we are flying at
 		vec2 Blast;
 		float Kick = 0.0f;
+		float EscapeKick = 0.0f;
 		float BlastTicks = 0.0f;
-		const float Score = Try(Dir, &Blast, &Kick, &BlastTicks);
-		// Ties go to the harder kick, i.e. to the shot that detonates against the NEAREST solid surface:
-		// blast force falls off with distance, so the closest wall, floor or ceiling throws us the furthest.
-		if(Score > Out.m_Score || (Score > 0.0f && Score >= Out.m_Score - 0.5f && Kick > Out.m_Kick))
+		const float Score = Try(Dir, &Blast, &Kick, &EscapeKick, &BlastTicks);
+		// Once several shots all survive the full horizon, prefer the one whose REAL impulse points
+		// furthest away from the predicted danger. Clearance-only ranking could choose a visually
+		// nonsensical side shot even though a direct, equally safe push existed. For partial saves,
+		// survival time remains authoritative.
+		const bool FullSave = Score >= (float)ms_Tuning.m_Horizon;
+		const bool BestFullSave = Out.m_Score >= (float)ms_Tuning.m_Horizon;
+		bool Better = false;
+		if(FullSave != BestFullSave)
+			Better = FullSave;
+		else if(FullSave)
+			Better = EscapeKick > Out.m_EscapeKick + 0.25f ||
+				(absolute(EscapeKick - Out.m_EscapeKick) <= 0.25f &&
+					(Score > Out.m_Score || (Score >= Out.m_Score - 0.5f && Kick > Out.m_Kick)));
+		else
+			Better = Score > Out.m_Score || (Score > 0.0f && Score >= Out.m_Score - 0.5f && Kick > Out.m_Kick);
+		if(Better)
 		{
 			Out.m_Score = Score;
 			Out.m_Dir = Dir;
 			Out.m_Blast = Blast;
 			Out.m_Kick = Kick;
+			Out.m_EscapeKick = EscapeKick;
 			Out.m_BlastTicks = BlastTicks;
 			Out.m_Found = true;
 		}

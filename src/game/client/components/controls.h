@@ -56,7 +56,7 @@ public:
 	int AvoidDangerClassPoint(float x, float y, bool ForceFreezeRecoverable = false) const; // classify one tile point: 0 = safe, 1 = recoverable freeze, 2 = lethal. ForceFreezeRecoverable: freeze counts as class 1 even with tc_avoid_unfreeze off
 	bool AvoidHardDeathPoint(float x, float y) const; // is this point a kill tile or off-map (the hitbox-corner death test, freeze excluded)
 	int AvoidDangerClass(float x, float y, bool ForceFreezeRecoverable = false) const; // same but for the whole tee body at (x,y): centre + 4 hitbox corners, worst wins
-	void ApplyAntiVoidRocket(bool Suppressed = false); // rocket (grenade) counter. Suppressed: do upkeep (release fire, tick cooldown) but don't arm/fire
+	void ApplyAntiVoidRocket(bool Suppressed = false); // rocket-first grenade counter. Suppressed: do upkeep (release fire, tick cooldown) but don't arm/fire
 	void CancelAntiVoidRocket(int Dummy, bool ReleaseFire = true); // relinquish fire/weapon ownership when disabled, reset, or dead
 	static constexpr int MAX_LASER_BOUNCES = 12;
 	void ApplyAntiVoidLaser(bool Suppressed = false); // laser self-ricochet counter; runs independently of the rocket

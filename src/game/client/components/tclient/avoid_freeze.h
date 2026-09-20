@@ -32,7 +32,8 @@ public:
 	void ApplyOverride();
 	// True when this tick's evaluation has the danger under control: waiting one more tick
 	// is proven safe, releasing the harmful hook is sufficient, or a fully-surviving input
-	// was applied. The rocket counter stays silent while this is true.
+	// was applied. The rocket counter records this for diagnostics but may still take the
+	// primary save; avoid's input then acts as a simultaneous movement fallback.
 	bool WouldSave() const { return m_SavedThisTick; }
 
 private:
