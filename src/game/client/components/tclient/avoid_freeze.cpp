@@ -164,10 +164,11 @@ void CAvoidFreeze::ApplyOverride()
 	const int DangerWithCurrent = SimulateDangerTick(LocalId, Current, SimTicks);
 
 	// Check danger WITHOUT hook (m_Hook=0). This is the "natural" danger state —
-	// if the player isn't holding hook, are they in danger?
+	// if the player isn't holding hook, are they in danger? When hook is already released this is
+	// exactly the simulation above, which is the common case; do not run the same physics twice.
 	CNetObj_PlayerInput NoHook = Current;
 	NoHook.m_Hook = 0;
-	const int DangerWithoutHook = SimulateDangerTick(LocalId, NoHook, SimTicks);
+	const int DangerWithoutHook = Current.m_Hook == 0 ? DangerWithCurrent : SimulateDangerTick(LocalId, NoHook, SimTicks);
 
 	// Remember the earliest danger tick for the rocket counter (it may not see it on its own path).
 	m_DangerTickThisTick = DangerWithoutHook > 0 ? DangerWithoutHook : DangerWithCurrent;
@@ -325,7 +326,10 @@ void CAvoidFreeze::ApplyOverride()
 		{
 			for(int hi = 0; hi < HookCount && !CanWait; hi++)
 			{
-				for(int ai = 0; ai < AimCount && !CanWait; ai++)
+				// With hook released the aim cannot affect movement. All aim candidates below are
+				// physically identical, so simulate the first one only. Test A only needs a boolean.
+				const int AnglesToTest = aHooks[hi] == 0 ? 1 : AimCount;
+				for(int ai = 0; ai < AnglesToTest && !CanWait; ai++)
 				{
 					CNetObj_PlayerInput Test = Current;
 					Test.m_Direction = aDirs[di];
@@ -366,6 +370,10 @@ void CAvoidFreeze::ApplyOverride()
 		{
 			for(int hi = 0; hi < HookCount && !Done; hi++)
 			{
+				// Releasing hook makes aim irrelevant to physics. Keep iterating every aim below so
+				// InputDiff and the original tie-breaking order stay bit-for-bit unchanged, but reuse
+				// the one simulation result for all of them.
+				int NoHookDanger = -1;
 				for(int ai = 0; ai < AimCount && !Done; ai++)
 				{
 					CNetObj_PlayerInput Test = Current;
@@ -383,7 +391,15 @@ void CAvoidFreeze::ApplyOverride()
 						Test.m_TargetY == Current.m_TargetY)
 						continue;
 
-					const int Danger = SimulateDangerTick(LocalId, Test, SimTicks);
+					int Danger;
+					if(aHooks[hi] == 0 && NoHookDanger >= 0)
+						Danger = NoHookDanger;
+					else
+					{
+						Danger = SimulateDangerTick(LocalId, Test, SimTicks);
+						if(aHooks[hi] == 0)
+							NoHookDanger = Danger;
+					}
 					const int Survival = (Danger == 0) ? SimTicks : Danger - 1;
 					const int Diff = InputDiff(Current, Test);
 

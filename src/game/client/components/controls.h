@@ -112,6 +112,7 @@ public:
 	bool m_aAntiVoidRocketReleasePending[NUM_DUMMIES] = {false, false}; // we pressed fire last tick and must release it
 	int m_aAntiVoidRocketFireValue[NUM_DUMMIES] = {0, 0}; // the m_Fire value we set, so we only release our own press
 	int m_aAntiVoidRocketPrevWeapon[NUM_DUMMIES] = {-1, -1}; // weapon to switch back to once the rocket save is done (-1 = none)
+	bool m_aAntiVoidRocketManualWeapon[NUM_DUMMIES] = {false, false}; // manual weapon input wins until the current danger has passed
 	int m_aAntiVoidLaserCooldown[NUM_DUMMIES] = {0, 0}; // ticks left before the laser counter may fire again
 	bool m_aAntiVoidLaserReleasePending[NUM_DUMMIES] = {false, false}; // we pressed fire last tick and must release it
 	int m_aAntiVoidLaserFireValue[NUM_DUMMIES] = {0, 0}; // the m_Fire value we set, so we only release our own press

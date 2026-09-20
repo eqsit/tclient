@@ -72,6 +72,8 @@ void CControls::OnPlayerDeath()
 	// Drop any pending rocket-save / laser-save weapon restore so we don't switch weapons right after respawning.
 	for(int &PrevWeapon : m_aAntiVoidRocketPrevWeapon)
 		PrevWeapon = -1;
+	for(bool &ManualWeapon : m_aAntiVoidRocketManualWeapon)
+		ManualWeapon = false;
 	for(int &PrevWeapon : m_aAntiVoidLaserPrevWeapon)
 		PrevWeapon = -1;
 	for(bool &Pending : m_aAntiVoidLaserReleasePending)
@@ -119,6 +121,11 @@ void CControls::ConKeyInputSet(IConsole::IResult *pResult, void *pUserData)
 	CInputSet *pSet = (CInputSet *)pUserData;
 	if(pResult->GetInteger(0))
 	{
+		// A real key press always owns the weapon choice. In particular, do not let the rocket
+		// counter overwrite this choice later in the same SnapInput call or restore an older weapon.
+		const int Dummy = g_Config.m_ClDummy;
+		pSet->m_pControls->m_aAntiVoidRocketManualWeapon[Dummy] = true;
+		pSet->m_pControls->m_aAntiVoidRocketPrevWeapon[Dummy] = -1;
 		*pSet->m_apVariables[g_Config.m_ClDummy] = pSet->m_Value;
 	}
 }
@@ -148,6 +155,14 @@ void CControls::ConKeyHoleAssist(IConsole::IResult *pResult, void *pUserData)
 void CControls::ConKeyInputNextPrevWeapon(IConsole::IResult *pResult, void *pUserData)
 {
 	CInputSet *pSet = (CInputSet *)pUserData;
+	if(pResult->GetInteger(0))
+	{
+		// Next/previous uses counters and clears WantedWeapon below, so inspecting WantedWeapon in
+		// the rocket code cannot distinguish this manual request. Latch it at the input edge instead.
+		const int Dummy = g_Config.m_ClDummy;
+		pSet->m_pControls->m_aAntiVoidRocketManualWeapon[Dummy] = true;
+		pSet->m_pControls->m_aAntiVoidRocketPrevWeapon[Dummy] = -1;
+	}
 	ConKeyInputCounter(pResult, pSet);
 	pSet->m_pControls->m_aInputData[g_Config.m_ClDummy].m_WantedWeapon = 0;
 }
@@ -1078,7 +1093,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// grenade). A freeze with nothing solid around it would just swallow the grenade, so the weapon
 	// is not even taken in that case. BestAim does the precise check at fire time.
 	bool SolidWithinBlast = false;
-	for(int i = 0; i < 16 && !SolidWithinBlast; i++)
+	for(int i = 0; DangerInArm && i < 16 && !SolidWithinBlast; i++)
 	{
 		const vec2 Dir = direction((float)i / 16.0f * 2.0f * pi);
 		vec2 Hit;
@@ -1113,6 +1128,21 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			RocketTick, State, pText, CharPos.x, CharPos.y, Vel.x, Vel.y, DangerTick, DangerDist, BafDangerTick, Speed, LeadDist, FireLead,
 			SolidWithinBlast ? 1 : 0, AvoidSaves ? 1 : 0, AvoidNoSolution ? 1 : 0, HaveGrenade ? 1 : 0, GrenadeReady ? 1 : 0, m_aAntiVoidRocketCooldown[Dummy]);
 	};
+
+	// Weapon binds are authoritative. Once the player changes weapon during a rocket-save window,
+	// leave both their direct slot request and next/previous counters untouched until that danger
+	// has passed. Without this latch the counter wrote grenade here on every tick, making switching
+	// weapons impossible; merely dropping PrevWeapon was insufficient because it immediately re-armed.
+	if(m_aAntiVoidRocketManualWeapon[Dummy])
+	{
+		m_aAntiVoidRocketPrevWeapon[Dummy] = -1;
+		if(DangerInArm)
+		{
+			LogRocket(8, "manual weapon input: rocket weapon override suspended until danger clears");
+			return;
+		}
+		m_aAntiVoidRocketManualWeapon[Dummy] = false;
+	}
 
 	if(DangerInArm)
 	{
