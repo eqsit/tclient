@@ -45,7 +45,10 @@ static vec2 BlastPos(CCollision *pCollision, vec2 From, vec2 Dir, const CRocketS
 {
 	const vec2 Start = From + Dir * 28.0f * 0.75f; // the game spawns the projectile just outside the tee
 	vec2 Prev = Start;
-	const float Step = 1.0f / 200.0f; // fine enough that a tile is never skipped at grenade speed
+	// ~7px of flight per sample at the default 1000px/s (and still well under the 32px tile size even
+	// for the fastest tuned grenades), which is fine enough that a solid tile is never skipped and keeps
+	// the 32-ray search cheap.
+	const float Step = 1.0f / 150.0f;
 	if(pHitSolid)
 		*pHitSolid = false;
 	if(pOutTime)
@@ -112,15 +115,20 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 		}
 		// How much open space is there around the tee at this moment? Sampled in eight directions, the
 		// nearest danger wins — that is the "how far did the rocket actually throw me clear" measure.
-		for(int d = 0; d < 8; ++d)
+		// Only every other tick and in 32px steps: this score only ranks shots that all survived the
+		// window anyway, so coarse sampling is plenty and keeps the search cheap enough to fire often.
+		if((i & 1) == 0)
 		{
-			const vec2 Dir = direction((float)d / 8.0f * 2.0f * pi);
-			for(float r = 16.0f; r <= ROCKET_CLEARANCE_MAX; r += 16.0f)
-				if(DangerAt(pCollision, Core.m_Pos.x + Dir.x * r, Core.m_Pos.y + Dir.y * r, Cfg))
-				{
-					Worst = minimum(Worst, r);
-					break;
-				}
+			for(int d = 0; d < 8; ++d)
+			{
+				const vec2 Dir = direction((float)d / 8.0f * 2.0f * pi);
+				for(float r = 16.0f; r <= ROCKET_CLEARANCE_MAX; r += 32.0f)
+					if(DangerAt(pCollision, Core.m_Pos.x + Dir.x * r, Core.m_Pos.y + Dir.y * r, Cfg))
+					{
+						Worst = minimum(Worst, r);
+						break;
+					}
+			}
 		}
 	}
 	// Survived the whole window: score above every "frozen at tick i" result, ranked by the room it kept.

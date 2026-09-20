@@ -54,11 +54,6 @@ private:
 	bool m_SavedThisTick = false;
 	// True when the brute force found no input that avoids the danger at all this tick.
 	bool m_NoSolutionThisTick = false;
-	// True when avoid has the situation under control this tick: safe, can wait one more tick, released
-	// the hook, or applied a fully-surviving input. The rocket counter is a last resort and stays out of
-	// it while this holds — the logs showed the large majority of shots were fired while avoid was still
-	// in its "wait" state and nothing ever came of them.
-	bool m_HasPlanThisTick = false;
 	// First tick danger appears in avoid's simulation (0 = safe). The rocket uses it when its own
 	// path prediction sees nothing but avoid does.
 	int m_DangerTickThisTick = 0;
@@ -71,8 +66,6 @@ public:
 	// No input survives: the rocket counter uses this to fire as soon as it has a valid shot.
 	bool NoSolution() const { return m_NoSolutionThisTick; }
 	int DangerTick() const { return m_DangerTickThisTick; }
-	// Avoid is on top of the situation: the rocket counter must not fire a speculative grenade.
-	bool HasPlan() const { return m_HasPlanThisTick; }
 };
 
 #endif // GAME_CLIENT_COMPONENTS_TCLIENT_AVOID_FREEZE_H

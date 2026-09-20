@@ -126,7 +126,6 @@ void CAvoidFreeze::ApplyOverride()
 	m_SavedThisTick = false;
 	m_NoSolutionThisTick = false;
 	m_DangerTickThisTick = 0;
-	m_HasPlanThisTick = false;
 	if(!g_Config.m_KxBasicAvoidFreeze)
 	{
 		m_BlockHeldHookUntilRelease = false;
@@ -194,7 +193,6 @@ void CAvoidFreeze::ApplyOverride()
 	// No danger at all (with or without hook) — safe. Release any override.
 	if(DangerWithCurrent == 0 && DangerWithoutHook == 0)
 	{
-		m_HasPlanThisTick = true; // nothing to survive
 		LogDecision(0, "safe: no danger on the current path", 0, nullptr, 0);
 		if(m_WasOverriding)
 		{
@@ -216,13 +214,11 @@ void CAvoidFreeze::ApplyOverride()
 		const int DelayedDanger = SimulateDangerTickDelayed(LocalId, Current, 1, NoHook, SimTicks);
 		if(DelayedDanger == 0)
 		{
-			m_HasPlanThisTick = true; // hook is safe for one more tick
 			LogDecision(1, "wait: keeping the hook is safe for one more tick", DelayedDanger, nullptr, 0);
 			return; // hook is safe for now, don't intervene yet
 		}
 
-		// Can't wait — release hook NOW. Avoid handles this itself, so the rocket stays out of it too.
-		m_HasPlanThisTick = true;
+		// Can't wait — release hook NOW.
 		LogDecision(3, "RELEASE hook: it is dragging us into danger", DangerWithoutHook, nullptr, 0);
 		pInput->m_Hook = 0;
 		m_WasOverriding = true;
@@ -350,7 +346,6 @@ void CAvoidFreeze::ApplyOverride()
 
 	if(CanWait)
 	{
-		m_HasPlanThisTick = true; // avoid can still act on a later tick
 		LogDecision(1, "wait: an escape input survives after one more tick", DangerWithoutHook, nullptr, 0);
 		return;
 	}
@@ -418,10 +413,8 @@ void CAvoidFreeze::ApplyOverride()
 	if(Found && BestSurvival > CurrentSurvival)
 	{
 		LogDecision(2, "OVERRIDE input", DangerWithoutHook, &BestInput, BestSurvival);
-		// A full-window survivor means avoid handles this on its own; tell the rocket counter. A
-		// best-effort override (partial survival) is not a plan — the rocket is allowed to help there.
+		// A full-window survivor means avoid handles this on its own; tell the rocket counter.
 		m_SavedThisTick = BestSurvival >= SimTicks;
-		m_HasPlanThisTick = m_SavedThisTick;
 		pInput->m_Direction = BestInput.m_Direction;
 		pInput->m_Jump = BestInput.m_Jump;
 		pInput->m_Hook = BestInput.m_Hook;

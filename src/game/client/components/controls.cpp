@@ -1052,11 +1052,6 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// the grenade is ready and BestAim has a valid detonation, even if the rocket's own path prediction
 	// does not see the danger (avoid's model and the core simulation sometimes disagree).
 	const bool AvoidNoSolution = GameClient()->m_AvoidFreeze.NoSolution();
-	// Avoid having a plan at all (safe / can wait one more tick / released the hook / fully saved) is
-	// enough to stand down: firing then is speculative. The logs showed the overwhelming majority of
-	// shots happened while avoid was still in its "wait" state, and nothing ever came of them — just a
-	// grenade thrown away and your weapon swapped. The rocket only works when avoid is out of options.
-	const bool AvoidHandles = GameClient()->m_AvoidFreeze.HasPlan();
 
 	// avoid may see the danger while our own core prediction does not (different models). Merge its
 	// tick into the time gates; the distance gates still use our own path.
@@ -1093,7 +1088,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			SolidWithinBlast = true;
 	}
 
-	const bool NeedRocket = DangerInArm && SolidWithinBlast && !AvoidSaves && !AvoidHandles;
+	const bool NeedRocket = DangerInArm && SolidWithinBlast && !AvoidSaves;
 
 	// Use the PREDICTED active weapon (updates in ~1 tick, no ping wait) to know when the grenade is really in hand.
 	const bool GrenadeReady = GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_GRENADE;
