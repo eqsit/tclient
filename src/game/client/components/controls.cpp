@@ -19,6 +19,7 @@
 #include <game/client/components/menus.h>
 #include <game/client/components/scoreboard.h>
 #include <game/client/gameclient.h>
+#include <game/client/prediction/entities/character.h>
 #include <game/collision.h>
 #include <game/mapitems.h>
 #include <game/rocket_save.h>
@@ -1132,8 +1133,13 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 
 	const bool NeedRocket = DangerInArm && SolidWithinBlast;
 
-	// Use the PREDICTED active weapon (updates in ~1 tick, no ping wait) to know when the grenade is really in hand.
-	const bool GrenadeReady = GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_GRENADE;
+	// Active weapon alone does not mean it can fire. The old counter emitted a new "shot" every other
+	// tick while the server was still rejecting them for reload, then suppressed avoid as if those
+	// phantom grenades existed. Read the same predicted reload timer FireWeapon uses.
+	const int LocalId = GameClient()->m_Snap.m_LocalClientId;
+	const CCharacter *pPredictedCharacter = LocalId >= 0 ? GameClient()->m_PredictedWorld.GetCharacterById(LocalId) : nullptr;
+	const int GrenadeReload = pPredictedCharacter ? pPredictedCharacter->GetReloadTimer() : 0;
+	const bool GrenadeReady = GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_GRENADE && GrenadeReload == 0;
 
 	// Debug log (tc_anti_void_rocket_debug), tag "rocket": level 1 prints state changes, level 2 every tick.
 	const int RocketTick = Client()->PredGameTick(Dummy);
@@ -1153,9 +1159,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		if(State == m_aAntiVoidRocketLogState[Dummy] && g_Config.m_TcAntiVoidRocketDebug < 2)
 			return;
 		m_aAntiVoidRocketLogState[Dummy] = State;
-		log_info("rocket", "tick=%d state=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[tick=%d dist=%.1f bafTick=%d] speed=%.1f armLead=%.0f fireLead=%.0f solid=%d avoidSaves=%d avoidNoSolution=%d grenade=%d ready=%d cooldown=%d",
+		log_info("rocket", "tick=%d state=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[tick=%d dist=%.1f bafTick=%d] speed=%.1f armLead=%.0f fireLead=%.0f solid=%d avoidSaves=%d avoidNoSolution=%d grenade=%d ready=%d reload=%d cooldown=%d",
 			RocketTick, State, pText, CharPos.x, CharPos.y, Vel.x, Vel.y, DangerTick, DangerDist, BafDangerTick, Speed, LeadDist, FireLead,
-			SolidWithinBlast ? 1 : 0, AvoidSaves ? 1 : 0, AvoidNoSolution ? 1 : 0, HaveGrenade ? 1 : 0, GrenadeReady ? 1 : 0, m_aAntiVoidRocketCooldown[Dummy]);
+			SolidWithinBlast ? 1 : 0, AvoidSaves ? 1 : 0, AvoidNoSolution ? 1 : 0, HaveGrenade ? 1 : 0, GrenadeReady ? 1 : 0, GrenadeReload, m_aAntiVoidRocketCooldown[Dummy]);
 	};
 
 	// Weapon binds are authoritative. Once the player changes weapon during a rocket-save window,
@@ -1197,6 +1203,8 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 
 		// Arm: switch to the grenade now so it is ready by the fire moment.
 		m_aInputData[Dummy].m_WantedWeapon = WEAPON_GRENADE + 1;
+		if(GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_GRENADE && GrenadeReload > 0)
+			LogRocket(11, "hold: grenade is reloading, avoid remains authoritative");
 
 		// Fire once the grenade is in hand and either the usual gate is met or avoid has no solution at
 		// all (last resort). One clean press (released next tick).
