@@ -16,7 +16,7 @@ class CTClient : public CComponent
 	void AirRescue();
 	static void ConAirRescue(IConsole::IResult *pResult, void *pUserData);
 
-	static void ConAntiVoidToggle(IConsole::IResult *pResult, void *pUserData);
+	static void ConAvoidToggle(IConsole::IResult *pResult, void *pUserData);
 	static void ConBalancerToggle(IConsole::IResult *pResult, void *pUserData);
 	static void ConWeaponSpinToggle(IConsole::IResult *pResult, void *pUserData);
 	static void ConWeaponSpinModeNext(IConsole::IResult *pResult, void *pUserData);

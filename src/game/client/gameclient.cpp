@@ -125,6 +125,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Binds,
 					      &m_Binds.m_SpecialBinds,
 					      &m_Controls,
+					      &m_AvoidFreeze, // TClient: Kinetix Basic Avoid Freeze
 					      &m_Camera,
 					      &m_Sounds,
 					      &m_Voting,
@@ -147,7 +148,6 @@ void CGameClient::OnConsoleInit()
 						  &m_MovingTilesBackground, // TClient
 						  &m_MapLayersForeground,
 						  &m_MovingTilesForeground, // TClient
-					      &m_Controls.m_AvoidOverlay, // TClient: must render AFTER the map layers or the tilemap covers it
 					      &m_Outlines,  // TClient
 					      &m_Mumble, // TClient
 					      &m_Pet, // TClient

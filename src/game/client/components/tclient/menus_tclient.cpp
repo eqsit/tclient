@@ -561,7 +561,7 @@ void CMenus::RenderSettingsTClientSettings(CUIRect MainView)
 	// so avoid force-disables it (see CGameClient::FastInputEnabled). Say so instead of leaving a checkbox
 	// that looks enabled but does nothing.
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcFastInput,
-		g_Config.m_TcAntiVoid ? TCLocalize("Fast Input (off while Avoid is on)") : TCLocalize("Fast Input (reduced visual delay)"),
+		g_Config.m_KxBasicAvoidFreeze ? TCLocalize("Fast Input (off while Avoid is on)") : TCLocalize("Fast Input (reduced visual delay)"),
 		&g_Config.m_TcFastInput, &Column, LineSize);
 
 	Column.HSplitTop(LineSize, &Button, &Column);
@@ -3227,7 +3227,7 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 	MainView.VSplitRight(5.0f, &MainView, nullptr);
 	MainView.VSplitLeft(10.0f, nullptr, &MainView);
 
-	// KRX-style layout: two columns of rounded cards, everything visible at once.
+	// Two columns of rounded cards, everything visible at once.
 	CUIRect LeftCol, RightCol;
 	MainView.VSplitMid(&LeftCol, &RightCol, Margin);
 
@@ -3252,88 +3252,85 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 
 	// ----- left column -----
 
-	// Main: master switch, NSIF fallback and AFK protection
+	// Main: master switch (Kinetix Basic Avoid Freeze) and which dangers are avoided
 	{
-		CUIRect Card = BeginCard(&LeftCol, "Main", (g_Config.m_TcAvoidAfkProtection ? 4.0f : 3.0f) * LineSize);
+		CUIRect Card = BeginCard(&LeftCol, "Main (Kinetix avoid)", 4.0f * LineSize);
 		static CButtonContainer s_EnableButton;
 		Card.HSplitTop(LineSize, &Button, &Card);
-		if(DoButtonLineSize_Menu(&s_EnableButton, "Enable", g_Config.m_TcAntiVoid, &Button, LineSize))
-			g_Config.m_TcAntiVoid ^= 1;
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAvoidNsif, "NSIF (no safe input found: take the longest-surviving one)", &g_Config.m_TcAvoidNsif, &Card, LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAvoidAfkProtection, "Afk protection", &g_Config.m_TcAvoidAfkProtection, &Card, LineSize);
-		if(g_Config.m_TcAvoidAfkProtection)
+		if(DoButtonLineSize_Menu(&s_EnableButton, "Enable", g_Config.m_KxBasicAvoidFreeze, &Button, LineSize))
+			g_Config.m_KxBasicAvoidFreeze ^= 1;
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafAvoidFreeze, "Freeze", &g_Config.m_KxBafAvoidFreeze, &Card, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafAvoidTeleport, "Teleport tiles", &g_Config.m_KxBafAvoidTeleport, &Card, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafAvoidDeath, "Death tiles", &g_Config.m_KxBafAvoidDeath, &Card, LineSize);
+	}
+
+	// Allowed inputs: which fields the brute-force search may override
+	{
+		CUIRect Card = BeginCard(&LeftCol, "Allowed inputs", (5.0f + (g_Config.m_KxBafReleaseHook ? 1.0f : 0.0f) + (g_Config.m_KxBafAim ? 2.0f : 0.0f)) * LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafDirection, "Direction", &g_Config.m_KxBafDirection, &Card, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafJump, "Jump", &g_Config.m_KxBafJump, &Card, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafHook, "Throw a hook in escape combos", &g_Config.m_KxBafHook, &Card, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafReleaseHook, "Release my hook when it pulls into danger", &g_Config.m_KxBafReleaseHook, &Card, LineSize);
+		if(g_Config.m_KxBafReleaseHook)
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafRehook, "Automatically rehook when safe", &g_Config.m_KxBafRehook, &Card, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafAim, "Aim (try angles in a cone)", &g_Config.m_KxBafAim, &Card, LineSize);
+		if(g_Config.m_KxBafAim)
 		{
 			Card.HSplitTop(LineSize, &Button, &Card);
-			Ui()->DoScrollbarOption(&g_Config.m_TcAvoidAfkSeconds, &g_Config.m_TcAvoidAfkSeconds, &Button, "Seconds", 1, 60, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " s");
+			Ui()->DoScrollbarOption(&g_Config.m_KxBafFov, &g_Config.m_KxBafFov, &Button, "FOV", 5, 360, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " deg");
+			Card.HSplitTop(LineSize, &Button, &Card);
+			Ui()->DoScrollbarOption(&g_Config.m_KxBafAngles, &g_Config.m_KxBafAngles, &Button, "Angles", 1, 144, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "");
 		}
 	}
 
-	// Settings: the prediction window and which inputs the bot may override
+	// Prediction window and the silent aim channel
 	{
-		CUIRect Card = BeginCard(&LeftCol, "Settings", (4.0f + (g_Config.m_TcAvoidHook ? 1.0f : 0.0f)) * LineSize);
+		CUIRect Card = BeginCard(&LeftCol, "Prediction", 2.0f * LineSize);
 		Card.HSplitTop(LineSize, &Button, &Card);
-		Ui()->DoScrollbarOption(&g_Config.m_TcAvoidCheckTicks, &g_Config.m_TcAvoidCheckTicks, &Button, "Check ticks", 5, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " ticks");
-		Card.HSplitTop(LineSize, &Button, &Card);
-		Ui()->DoScrollbarOption(&g_Config.m_TcAvoidKickTicks, &g_Config.m_TcAvoidKickTicks, &Button, "Kick in ticks (hook)", 1, 50, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " ticks");
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAvoidHook, "Hook", &g_Config.m_TcAvoidHook, &Card, LineSize);
-		if(g_Config.m_TcAvoidHook)
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAvoidResumeHook, "Resume my hook once it's safe again (if I keep holding)", &g_Config.m_TcAvoidResumeHook, &Card, LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAvoidDirection, "Direction (freeze walls only, no timings)", &g_Config.m_TcAvoidDirection, &Card, LineSize);
-	}
-
-	// Rescue hook: the last-resort aimbot throw when nothing milder saves you
-	{
-		CUIRect Card = BeginCard(&LeftCol, "Rescue hook (aimbot)", (g_Config.m_TcRescueHook ? 5.0f : 1.0f) * LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcRescueHook, "Hook a saving surface when nothing else helps", &g_Config.m_TcRescueHook, &Card, LineSize);
-		if(g_Config.m_TcRescueHook)
-		{
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcRescueHookHoldMode, "Hold the grab until real footing (tap hook to take over)", &g_Config.m_TcRescueHookHoldMode, &Card, LineSize);
-			Card.HSplitTop(LineSize, &Button, &Card);
-			Ui()->DoScrollbarOption(&g_Config.m_TcRescueHookSegments, &g_Config.m_TcRescueHookSegments, &Button, "Segments", 4, 48, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, "");
-			Card.HSplitTop(LineSize, &Button, &Card);
-			Ui()->DoScrollbarOption(&g_Config.m_TcRescueHookFov, &g_Config.m_TcRescueHookFov, &Button, "FOV", 30, 360, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " deg");
-			Card.HSplitTop(LineSize, &Button, &Card);
-			Ui()->DoScrollbarOption(&g_Config.m_TcRescueHookMargin, &g_Config.m_TcRescueHookMargin, &Button, "Kick in ticks", 1, 50, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " ticks");
-		}
+		Ui()->DoScrollbarOption(&g_Config.m_KxBafTicks, &g_Config.m_KxBafTicks, &Button, "Simulate ticks", 1, 20, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " ticks");
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_KxBafSilent, "Silent aim (server only, crosshair stays)", &g_Config.m_KxBafSilent, &Card, LineSize);
 	}
 
 	// Hotkeys
 	{
 		CUIRect Card = BeginCard(&LeftCol, "Hotkeys", 2.0f * (LineSize + MarginExtraSmall));
 		static CButtonContainer s_ReaderButtonAntiVoid, s_ClearButtonAntiVoid;
-		DoLine_KeyReader(Card, s_ReaderButtonAntiVoid, s_ClearButtonAntiVoid, "Toggle avoid", "tc_anti_void_toggle");
+		DoLine_KeyReader(Card, s_ReaderButtonAntiVoid, s_ClearButtonAntiVoid, "Toggle avoid", "tc_avoid_toggle");
 		static CButtonContainer s_ReaderButtonRocket, s_ClearButtonRocket;
 		DoLine_KeyReader(Card, s_ReaderButtonRocket, s_ClearButtonRocket, "Toggle rocket", "toggle tc_anti_void_rocket 0 1");
 	}
 
+	// Debug logs (write to the console and the log files; tag "avoid" / "rocket")
+	{
+		CUIRect Card = BeginCard(&LeftCol, "Debug logs", 2.0f * LineSize);
+		Card.HSplitTop(LineSize, &Button, &Card);
+		Ui()->DoScrollbarOption(&g_Config.m_KxBafDebug, &g_Config.m_KxBafDebug, &Button, "Avoid log", 0, 2, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " (0-2)");
+		Card.HSplitTop(LineSize, &Button, &Card);
+		Ui()->DoScrollbarOption(&g_Config.m_TcAntiVoidRocketDebug, &g_Config.m_TcAntiVoidRocketDebug, &Button, "Rocket log", 0, 2, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " (0-2)");
+	}
+
 	// ----- right column -----
 
-	// Tiles: which tile types count as the void
+	// Danger tiles, shared with the rocket / laser counters
 	{
-		CUIRect Card = BeginCard(&RightCol, "Tiles", (7.0f + (g_Config.m_TcAvoidUnfreeze ? 2.0f : 1.0f)) * LineSize);
+		CUIRect Card = BeginCard(&RightCol, "Danger tiles", 7.0f * LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidTele, "Teles", &g_Config.m_TcAntiVoidTele, &Card, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidDeath, "Death", &g_Config.m_TcAntiVoidDeath, &Card, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidFreeze, "Freeze", &g_Config.m_TcAntiVoidFreeze, &Card, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidDeepFreeze, "Deep freeze", &g_Config.m_TcAntiVoidDeepFreeze, &Card, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidLiveFreeze, "Live freeze", &g_Config.m_TcAntiVoidLiveFreeze, &Card, LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAvoidThreadFreeze, "Thread freeze (only release the hook for a real void, not mere freeze)", &g_Config.m_TcAvoidThreadFreeze, &Card, LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAvoidUnfreeze, "Freeze is recoverable (only a slide into the void kills)", &g_Config.m_TcAvoidUnfreeze, &Card, LineSize);
 		Card.HSplitTop(LineSize, &Button, &Card);
 		Ui()->DoScrollbarOption(&g_Config.m_TcAvoidFreezeMargin, &g_Config.m_TcAvoidFreezeMargin, &Button, "Freeze slack", 0, 14, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " px");
-		if(g_Config.m_TcAvoidUnfreeze)
-		{
-			Card.HSplitTop(LineSize, &Button, &Card);
-			Ui()->DoScrollbarOption(&g_Config.m_TcAvoidUnfreezeTicks, &g_Config.m_TcAvoidUnfreezeTicks, &Button, "Slide follow", 20, 400, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " ticks");
-		}
 	}
 
-	// Rocket counter: a SEPARATE feature, works even when the braking avoid is off
+	// Rocket counter: a SEPARATE feature, keeps working with the Kinetix avoid
 	{
-		CUIRect Card = BeginCard(&RightCol, "Rocket", (g_Config.m_TcAntiVoidRocket ? 4.0f : 1.0f) * LineSize);
+		CUIRect Card = BeginCard(&RightCol, "Rocket", (g_Config.m_TcAntiVoidRocket ? 3.0f : 1.0f) * LineSize);
 		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidRocket, "Counter the void with a rocket", &g_Config.m_TcAntiVoidRocket, &Card, LineSize);
 		if(g_Config.m_TcAntiVoidRocket)
 		{
-			// Stored in tenths of a pixel so it can go as low as 0.1px for very tight timing.
+			// Stored in hundredths of a pixel so it can go as low as 0.01px for very tight timing.
 			Card.HSplitTop(LineSize, &Button, &Card);
 			CUIRect SliderLabel, ScrollBar;
 			Button.VSplitMid(&SliderLabel, &ScrollBar, minimum(10.0f, Button.w * 0.05f));
@@ -3347,7 +3344,6 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 			g_Config.m_TcAntiVoidRocketDistance = Value;
 			Card.HSplitTop(LineSize, &Button, &Card);
 			Ui()->DoScrollbarOption(&g_Config.m_TcAntiVoidRocketCooldown, &g_Config.m_TcAntiVoidRocketCooldown, &Button, "Cooldown", 1, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE, " ticks");
-			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidRocketAimVoid, "Aim at the nearest void (not along inertia)", &g_Config.m_TcAntiVoidRocketAimVoid, &Card, LineSize);
 		}
 	}
 
@@ -3359,13 +3355,6 @@ void CMenus::RenderSettingsMyForkAntiVoid(CUIRect MainView)
 		{
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidLaserDebug, "Detailed debug logs in console", &g_Config.m_TcAntiVoidLaserDebug, &Card, LineSize);
 		}
-	}
-
-	// Visuals
-	{
-		CUIRect Card = BeginCard(&RightCol, "Visuals", 2.0f * LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidShow, "Show overlay (danger tiles + points)", &g_Config.m_TcAntiVoidShow, &Card, LineSize);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_TcAntiVoidDebug, "Log braking to console", &g_Config.m_TcAntiVoidDebug, &Card, LineSize);
 	}
 
 	// The scroll region needs the real content height: the bottom of the taller column.

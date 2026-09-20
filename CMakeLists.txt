@@ -2335,8 +2335,6 @@ set_src(GAME_SHARED GLOB src/game
   alloc.h
   collision.cpp
   collision.h
-  freeze_wall.cpp
-  freeze_wall.h
   gamecore.cpp
   gamecore.h
   layers.cpp
@@ -2619,6 +2617,8 @@ if(CLIENT)
     components/tclient/bindchat.h
     components/tclient/bindwheel.cpp
     components/tclient/bindwheel.h
+    components/tclient/avoid_freeze.cpp
+    components/tclient/avoid_freeze.h
     components/tclient/colored_parts.h
     components/tclient/custom_communities.cpp
     components/tclient/custom_communities.h

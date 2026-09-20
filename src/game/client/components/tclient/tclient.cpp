@@ -399,10 +399,10 @@ void CTClient::ConAirRescue(IConsole::IResult *pResult, void *pUserData)
 	((CTClient *)pUserData)->AirRescue();
 }
 
-void CTClient::ConAntiVoidToggle(IConsole::IResult *pResult, void *pUserData)
+void CTClient::ConAvoidToggle(IConsole::IResult *pResult, void *pUserData)
 {
-	g_Config.m_TcAntiVoid = g_Config.m_TcAntiVoid ? 0 : 1;
-	((CTClient *)pUserData)->GameClient()->Echo(g_Config.m_TcAntiVoid ? "Anti-void: ON" : "Anti-void: OFF");
+	g_Config.m_KxBasicAvoidFreeze = g_Config.m_KxBasicAvoidFreeze ? 0 : 1;
+	((CTClient *)pUserData)->GameClient()->Echo(g_Config.m_KxBasicAvoidFreeze ? "Avoid: ON" : "Avoid: OFF");
 }
 
 void CTClient::ConBalancerToggle(IConsole::IResult *pResult, void *pUserData)
@@ -446,7 +446,7 @@ void CTClient::OnConsoleInit()
 {
 	Console()->Register("calc", "r[expression]", CFGFLAG_CLIENT, ConCalc, this, "Evaluate an expression");
 	Console()->Register("airrescue", "", CFGFLAG_CLIENT, ConAirRescue, this, "Rescue to a nearby air tile");
-	Console()->Register("tc_anti_void_toggle", "", CFGFLAG_CLIENT, ConAntiVoidToggle, this, "Toggle anti-void on/off (bindable)");
+	Console()->Register("tc_avoid_toggle", "", CFGFLAG_CLIENT, ConAvoidToggle, this, "Toggle the Kinetix avoid on/off (bindable)");
 	Console()->Register("tc_balancer_toggle", "", CFGFLAG_CLIENT, ConBalancerToggle, this, "Toggle balancer on/off (bindable)");
 	// Announce hook aim on/off in chat whenever the value changes via console/bind (e.g. `toggle tc_hook_aim 0 1`),
 	// regardless of which command the key is bound to. Skipped on config load (only while in a game).

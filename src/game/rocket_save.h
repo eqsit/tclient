@@ -39,7 +39,11 @@ struct CRocketSaveTuning
 {
 	int m_Rays = 32; // directions tried, spread over the full circle
 	int m_Horizon = 50; // ticks the outcome of a shot is followed for
-	float m_InertiaDot = -0.1f; // how far off the direction of travel a shot may aim: the blast has to come from where you are heading, so it pushes you back out of it. Slightly negative = the sideways directions are still allowed
+	// How far off the direction of travel a shot may aim. -1 = no restriction: every direction is
+	// flown and scored by the outcome simulation. The old -0.1 filter threw away shots that go
+	// against the current motion, which is exactly the shot needed when hovering over a floor freeze
+	// while the tee drifts upward (the blast must come from below to push it back up).
+	float m_InertiaDot = -1.0f;
 };
 
 struct CRocketSaveAim

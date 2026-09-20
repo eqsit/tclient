@@ -36,6 +36,7 @@
 #include "components/console.h"
 #include "components/controls.h"
 #include "components/countryflags.h"
+#include "components/tclient/avoid_freeze.h"
 #include "components/damageind.h"
 #include "components/debughud.h"
 #include "components/effects.h"
@@ -183,6 +184,7 @@ public:
 	CImportantAlert m_ImportantAlert;
 	CDebugHud m_DebugHud;
 	CControls m_Controls;
+	CAvoidFreeze m_AvoidFreeze; // TClient: Kinetix Basic Avoid Freeze
 	CEffects m_Effects;
 	CScoreboard m_Scoreboard;
 	CStatboard m_Statboard;
@@ -1036,12 +1038,12 @@ public:
 	float m_SmoothIntraTick = 0;
 	bool CheckNewInput() override;
 
-	// TClient: fast input is force-disabled while avoid (tc_anti_void) is on. Avoid decides once per tick
+	// TClient: fast input is force-disabled while the ported Kinetix avoid is on. Avoid decides once per tick
 	// inside CControls::SnapInput, while fast input rebuilds the input from the raw keys and ships it every
-	// frame from CControls::CheckNewInput — that rebuild throws avoid's brake and hook release away, and the
+	// frame from CControls::CheckNewInput — that rebuild throws avoid's override away, and the
 	// extra fast-input prediction ticks then run on an input avoid never approved, so the two fight each
 	// other. The user's tc_fast_input value is left untouched, it simply does not apply while avoid runs.
-	static bool FastInputEnabled() { return g_Config.m_TcFastInput && !g_Config.m_TcAntiVoid; }
+	static bool FastInputEnabled() { return g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze; }
 	std::optional<CServerInfo> m_ConnectServerInfo = std::nullopt;
 	void SetConnectInfo(const NETADDR *pAddress) override;
 };
