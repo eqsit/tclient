@@ -102,7 +102,7 @@ static vec2 BlastForce(vec2 TeePos, vec2 Blast, const CRocketSaveCfg &Cfg)
 // last-moment shots as saves even though the grenade landed after the freeze. Higher is better: a run
 // that never touches freeze scores by how much room it keeps around it, a run that freezes scores by how
 // long it lasted.
-static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks, vec2 Blast, float BlastTime, vec2 *pOutKick = nullptr)
+static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_PlayerInput &Input, const CRocketSaveCfg &Cfg, int Ticks, vec2 Blast, float BlastTime, vec2 *pOutKick = nullptr, float *pOutBlastSpeed = nullptr, float *pOutBlastGain = nullptr)
 {
 	Core.Init(nullptr, pCollision);
 	Core.SetHookedPlayer(-1);
@@ -110,6 +110,10 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 	float Worst = 1e9f;
 	if(pOutKick)
 		*pOutKick = vec2(0.0f, 0.0f);
+	if(pOutBlastSpeed)
+		*pOutBlastSpeed = 0.0f;
+	if(pOutBlastGain)
+		*pOutBlastGain = 0.0f;
 	for(int i = 0; i < Ticks; ++i)
 	{
 		if(i == BlastTick)
@@ -123,6 +127,10 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 			Core.m_Vel = ClampVel(Core.MoveRestrictions(), Core.m_Vel + BlastForce(Core.m_Pos, Blast, Cfg));
 			if(pOutKick)
 				*pOutKick = Core.m_Vel - VelBefore;
+			if(pOutBlastSpeed)
+				*pOutBlastSpeed = length(Core.m_Vel);
+			if(pOutBlastGain)
+				*pOutBlastGain = length(Core.m_Vel) - length(VelBefore);
 		}
 		Core.m_Input = Input;
 		const vec2 Prev = Core.m_Pos;
@@ -139,9 +147,10 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 			return (float)i; // off the map is as deadly as it gets
 		// How much open space is there around the tee at this moment? Sampled in eight directions, the
 		// nearest danger wins — that is the "how far did the rocket actually throw me clear" measure.
-		// Only every other tick and in 32px steps: this score only ranks shots that all survived the
-		// window anyway, so coarse sampling is plenty and keeps the search cheap enough to fire often.
-		if((i & 1) == 0)
+		// Boost mode ranks full survivors by their actual post-blast speed instead, so doing this scan
+		// for every ray there cannot affect the result. Skipping it removes the hottest part of the
+		// 64-ray boost search without changing which safe boost is selected.
+		if(!Cfg.m_Boost && (i & 1) == 0)
 		{
 			for(int d = 0; d < 8; ++d)
 			{
@@ -172,8 +181,9 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// simulation froze a few ticks later — occasionally earlier than doing nothing, i.e. a blast that
 	// pushed the tee into freeze instead of out of it.
 	Out.m_BaseScore = Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Sim.m_Pos, Cfg.m_Lifetime);
-	if(Out.m_BaseScore >= (float)ms_Tuning.m_Horizon)
-		return Out; // nothing predicted to happen even without a rocket: no shot needed
+	const bool BaseSafe = Out.m_BaseScore >= (float)ms_Tuning.m_Horizon;
+	if(BaseSafe && !Cfg.m_Boost)
+		return Out; // save mode has nothing to fix; boost mode may still add speed without losing safety
 
 	// A candidate is only worth anything when the grenade actually detonates against something solid close
 	// enough to move us: a ceiling, a floor, a wall. That is the whole point of the rocket save — the blast
@@ -185,7 +195,7 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// along it, which is what "save and speed up" means for the boost option.
 	const float SpeedNow = length(Sim.m_Vel);
 	const vec2 MoveDir = SpeedNow > 0.001f ? Sim.m_Vel / SpeedNow : vec2(0.0f, 0.0f);
-	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick, float *pOutEscapeKick, float *pOutTicks, float *pOutBoostKick) -> float {
+	auto Try = [&](vec2 Dir, vec2 *pOutBlast, float *pOutKick, float *pOutEscapeKick, float *pOutTicks, float *pOutBoostKick, float *pOutBlastSpeed, float *pOutBlastGain) -> float {
 		bool HitSolid = false;
 		float BlastTime = Cfg.m_Lifetime;
 		const vec2 Blast = BlastPos(pCollision, Sim.m_Pos, Dir, Cfg, &HitSolid, &BlastTime);
@@ -199,6 +209,10 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			*pOutTicks = 0.0f;
 		if(pOutBoostKick)
 			*pOutBoostKick = 0.0f;
+		if(pOutBlastSpeed)
+			*pOutBlastSpeed = 0.0f;
+		if(pOutBlastGain)
+			*pOutBlastGain = 0.0f;
 		if(!HitSolid)
 			return 0.0f;
 		if(pOutTicks)
@@ -207,7 +221,9 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 		// position here rejected shots the tee was moving into and accepted shots it had already moved
 		// away from. Outcome also applies the current move restrictions at that future tick.
 		vec2 KickVec(0.0f, 0.0f);
-		const float Score = Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Blast, BlastTime, &KickVec);
+		float BlastSpeed = 0.0f;
+		float BlastGain = 0.0f;
+		const float Score = Outcome(pCollision, Sim, Input, Cfg, ms_Tuning.m_Horizon, Blast, BlastTime, &KickVec, &BlastSpeed, &BlastGain);
 		const float Kick = length(KickVec);
 		if(pOutKick)
 			*pOutKick = Kick;
@@ -215,6 +231,10 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			*pOutEscapeKick = dot(KickVec, DesiredPush);
 		if(pOutBoostKick)
 			*pOutBoostKick = dot(KickVec, MoveDir);
+		if(pOutBlastSpeed)
+			*pOutBlastSpeed = BlastSpeed;
+		if(pOutBlastGain)
+			*pOutBlastGain = BlastGain;
 		if(Kick < ROCKET_MIN_KICK)
 			return 0.0f;
 		return Score;
@@ -227,13 +247,17 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 		float Kick = 0.0f;
 		float EscapeKick = 0.0f;
 		float BoostKick = 0.0f;
+		float BlastSpeed = 0.0f;
+		float BlastGain = 0.0f;
 		Out.m_Dir = normalize(Fallback);
-		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick, &EscapeKick, &Out.m_BlastTicks, &BoostKick);
+		Out.m_PlainScore = Try(Out.m_Dir, &Blast, &Kick, &EscapeKick, &Out.m_BlastTicks, &BoostKick, &BlastSpeed, &BlastGain);
 		Out.m_Score = Out.m_PlainScore;
 		Out.m_Blast = Blast;
 		Out.m_Kick = Kick;
 		Out.m_EscapeKick = EscapeKick;
 		Out.m_BoostKick = BoostKick;
+		Out.m_BlastSpeed = BlastSpeed;
+		Out.m_BlastGain = BlastGain;
 		Out.m_Found = Out.m_PlainScore > 0.0f; // the plain aim only counts if it hits something solid
 	}
 
@@ -242,51 +266,49 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// harder. The nearest solid surface within that arc is the one that hits hardest, and the tie-break
 	// below picks it.
 	const int RayCount = Rays > 0 ? Rays : ms_Tuning.m_Rays;
-	for(int i = 0; i < RayCount; ++i)
-	{
-		const vec2 Dir = direction((float)i / (float)RayCount * 2.0f * pi);
+	auto Consider = [&](vec2 Dir) {
 		if(SpeedNow > 1.0f && dot(MoveDir, Dir) < ms_Tuning.m_InertiaDot)
-			continue; // behind us: firing there would shove us further into what we are flying at
+			return; // behind us: firing there would shove us further into what we are flying at
 		vec2 Blast;
 		float Kick = 0.0f;
 		float EscapeKick = 0.0f;
 		float BoostKick = 0.0f;
+		float BlastSpeed = 0.0f;
+		float BlastGain = 0.0f;
 		float BlastTicks = 0.0f;
-		const float Score = Try(Dir, &Blast, &Kick, &EscapeKick, &BlastTicks, &BoostKick);
+		const float Score = Try(Dir, &Blast, &Kick, &EscapeKick, &BlastTicks, &BoostKick, &BlastSpeed, &BlastGain);
 		// Once several shots all survive the full horizon, prefer the one whose REAL impulse points
 		// furthest away from the predicted danger. Clearance-only ranking could choose a visually
 		// nonsensical side shot even though a direct, equally safe push existed. For partial saves,
-		// survival time remains authoritative. With the boost option on, speed gained along the
-		// direction of travel ranks above the escape direction (both shots are full saves anyway).
+		// survival time remains authoritative.
 		const bool FullSave = Score >= (float)ms_Tuning.m_Horizon;
 		const bool BestFullSave = Out.m_Score >= (float)ms_Tuning.m_Horizon;
 		bool Better = false;
 		if(Cfg.m_Boost)
 		{
-			// Boost option: the rocket is a rocket jump first and a save second. The blast has to sit
-			// on the far side of where the tee is going, so the explosion throws it along its travel:
-			// while the tee is MOVING the shot that adds the most speed along the direction of travel
-			// wins (blast behind/below, classic rocket jump); while it hovers or crawls the shot that
-			// launches it hardest AWAY from the danger wins (the "hovering over freeze with ground
-			// below, shoot the ground and fly up" case). The plan must still improve on doing nothing,
-			// and a clearly harder push may trade up to a few ticks of simulated survival for it -
-			// the save is allowed to be partial, avoid and the hooks keep covering the rest.
-			const bool Moving = SpeedNow > 3.0f;
-			const bool Improves = Score > Out.m_BaseScore;
-			const bool BestImproves = Out.m_Found && Out.m_Score > Out.m_BaseScore;
-			if(Improves != BestImproves)
-				Better = Improves;
-			else if(Improves)
+			// Never trade an already-safe avoid path for speed. If the baseline is unsafe, a full save
+			// beats every partial one; only when neither shot fully saves do survival ticks stay ahead
+			// of speed. Among equally safe shots maximise the tee's ACTUAL speed immediately after the
+			// explosion, then the speed gained by the blast. This chooses the strongest real boost even
+			// when candidate grenades have different flight times.
+			const bool Eligible = BaseSafe ? FullSave : Score > Out.m_BaseScore;
+			const bool BestEligible = Out.m_Found && (BaseSafe ? BestFullSave : Out.m_Score > Out.m_BaseScore);
+			if(Eligible != BestEligible)
+				Better = Eligible;
+			else if(Eligible && FullSave != BestFullSave)
+				Better = FullSave;
+			else if(Eligible && FullSave)
 			{
-				const float MyPush = Moving ? BoostKick : EscapeKick;
-				const float BestPush = Moving ? Out.m_BoostKick : Out.m_EscapeKick;
-				if(MyPush > BestPush + 1.0f && Score >= Out.m_Score - 3.0f)
+				if(BlastSpeed > Out.m_BlastSpeed + 0.25f)
 					Better = true;
-				else if(absolute(MyPush - BestPush) <= 1.0f &&
-					(Kick > Out.m_Kick + 1.0f ||
-						(absolute(Kick - Out.m_Kick) <= 1.0f && Score > Out.m_Score)))
+				else if(absolute(BlastSpeed - Out.m_BlastSpeed) <= 0.25f &&
+					(BlastGain > Out.m_BlastGain + 0.25f ||
+						(absolute(BlastGain - Out.m_BlastGain) <= 0.25f && Kick > Out.m_Kick)))
 					Better = true;
 			}
+			else if(Eligible) // both are partial improvements: live longer first, boost harder second
+				Better = Score > Out.m_Score + 0.25f ||
+					(absolute(Score - Out.m_Score) <= 0.25f && BlastSpeed > Out.m_BlastSpeed);
 			else
 				Better = Score > Out.m_Score;
 		}
@@ -308,12 +330,33 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			Out.m_Kick = Kick;
 			Out.m_EscapeKick = EscapeKick;
 			Out.m_BoostKick = BoostKick;
+			Out.m_BlastSpeed = BlastSpeed;
+			Out.m_BlastGain = BlastGain;
 			Out.m_BlastTicks = BlastTicks;
 			Out.m_Found = true;
 		}
+	};
+	for(int i = 0; i < RayCount; ++i)
+	{
+		Consider(direction((float)i / (float)RayCount * 2.0f * pi));
+	}
+	// The full-circle fan finds the correct wall/side. Six cheap local probes then refine that result
+	// to quarter-ray precision, giving boost mode a much closer-to-optimal speed without multiplying
+	// the expensive search or making frame time spike.
+	if(Cfg.m_Boost && Out.m_Found)
+	{
+		const float BestAngle = std::atan2(Out.m_Dir.y, Out.m_Dir.x);
+		const float QuarterRay = 2.0f * pi / (float)RayCount / 4.0f;
+		for(int i = -3; i <= 3; ++i)
+			if(i != 0)
+				Consider(direction(BestAngle + (float)i * QuarterRay));
 	}
 	// A shot that beats doing nothing is the normal case; the caller may still fire the least-bad valid
 	// shot when avoid is out of options entirely, so the two are reported separately.
-	Out.m_Improves = Out.m_Found && Out.m_Score > Out.m_BaseScore;
+	// When avoid already supplies a full-window survivor, preserving that safety is the improvement
+	// boost mode needs; requiring an even larger clearance score used to suppress almost every boost.
+	// The caller separately requires a positive speed gain before actually pressing fire.
+	Out.m_Improves = Out.m_Found && (Cfg.m_Boost && BaseSafe ?
+		Out.m_Score >= (float)ms_Tuning.m_Horizon : Out.m_Score > Out.m_BaseScore);
 	return Out;
 }

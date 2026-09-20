@@ -2609,6 +2609,8 @@ if(CLIENT)
     components/spectator.h
     components/statboard.cpp
     components/statboard.h
+    components/tclient/avoid_freeze.cpp
+    components/tclient/avoid_freeze.h
     components/tclient/bg_draw.cpp
     components/tclient/bg_draw.h
     components/tclient/bg_draw_file.cpp
@@ -2617,8 +2619,6 @@ if(CLIENT)
     components/tclient/bindchat.h
     components/tclient/bindwheel.cpp
     components/tclient/bindwheel.h
-    components/tclient/avoid_freeze.cpp
-    components/tclient/avoid_freeze.h
     components/tclient/colored_parts.h
     components/tclient/custom_communities.cpp
     components/tclient/custom_communities.h

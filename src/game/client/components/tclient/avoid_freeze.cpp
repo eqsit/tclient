@@ -165,10 +165,10 @@ void CAvoidFreeze::ApplyOverride()
 	// Rocket Aggressive mode: hooks are the absolute last resort (see below) and any hook avoid throws
 	// itself is released as soon as the tee no longer needs it (the short-hook block further down).
 	const bool HooksLastResort = g_Config.m_TcAntiVoidRocket >= CControls::ANTI_VOID_ROCKET_AGGRESSIVE;
-	// Boost option (normal rocket mode): hooks save at maximum there. An escape that throws a hook wins
-	// over an equally safe escape that does not, so the tee is really pulled out by the hook while the
-	// rocket adds its speed on top. Aggressive mode keeps its minimum-hook policy instead.
-	const bool PreferHookEscapes = g_Config.m_TcAntiVoidRocketBoost != 0 && !HooksLastResort;
+	// Boost option (normal rocket mode): hooks keep saving there, but a hook is only picked when it
+	// actually survives longer than the best no-hook escape. Forcing the hook in front of an equally
+	// safe non-hook escape made avoid throw hooks "for no reason", which looked random and annoying;
+	// with the strict comparison the hook goes out exactly when it is the thing that saves.
 
 	int SimTicks = g_Config.m_KxBafTicks;
 	if(SimTicks < 1)
@@ -486,19 +486,9 @@ void CAvoidFreeze::ApplyOverride()
 					if(aHooks[hi] == 0 && Survival > BestNoHookSurvival)
 						BestNoHookSurvival = Survival;
 
-					// Boost mode: a hook escape beats an equally safe non-hook escape, so the hooks do
-					// the saving while the rocket is free to add speed.
-					const bool ThrowsHook = aHooks[hi] != 0 && Current.m_Hook == 0;
-					const bool BestThrowsHook = BestInput.m_Hook != 0 && Current.m_Hook == 0;
-					bool Better;
-					if(PreferHookEscapes && Survival == BestSurvival && Survival >= SimTicks &&
-						ThrowsHook != BestThrowsHook)
-						Better = ThrowsHook;
-					else
-						Better = BestSurvival < 0 ||
-							Survival > BestSurvival ||
-							(Survival == BestSurvival && Diff < BestDiff);
-					if(Better)
+					if(BestSurvival < 0 ||
+						Survival > BestSurvival ||
+						(Survival == BestSurvival && Diff < BestDiff))
 					{
 						BestSurvival = Survival;
 						BestDiff = Diff;
@@ -507,9 +497,7 @@ void CAvoidFreeze::ApplyOverride()
 						// Every combo changes at least one field (the exact current input is skipped), so
 						// a full survivor at diff 1 is optimal: later combos can at best match survival
 						// with a larger diff. Stop the brute force right here.
-						// Boost mode still has to look at the hook combinations before it can stop, so
-						// the early exit only fires once a hook escape is the best full survivor.
-						if(BestSurvival >= SimTicks && BestDiff <= 1 && (!PreferHookEscapes || BestThrowsHook))
+						if(BestSurvival >= SimTicks && BestDiff <= 1)
 							Done = true;
 					}
 				}

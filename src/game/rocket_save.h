@@ -33,8 +33,8 @@ struct CRocketSaveCfg
 	bool m_DeepFreeze = true;
 	bool m_LiveFreeze = true;
 	bool m_Death = true;
-	// Prefer, among shots that save the tee across the whole horizon anyway, the one whose blast also
-	// adds the most speed along the direction of travel (a grenade-jump style "save + boost").
+	// Preserve a safe baseline trajectory, then prefer the safe shot with the highest actual speed
+	// immediately after the blast (a grenade-jump style "save + boost").
 	bool m_Boost = false;
 };
 
@@ -59,6 +59,8 @@ struct CRocketSaveAim
 	float m_Kick = 0.0f; // px/tick the blast adds to our velocity
 	float m_EscapeKick = 0.0f; // component of that kick directly away from predicted danger
 	float m_BoostKick = 0.0f; // component of that kick along the direction of travel (speed gain)
+	float m_BlastSpeed = 0.0f; // tee speed right after the explosion (for the log)
+	float m_BlastGain = 0.0f; // how much speed the explosion itself added (positive gain is required to fire)
 	float m_BlastTicks = 0.0f; // ticks the grenade needs to fly there and detonate (this is what the outcome sim now waits for)
 	// What doing nothing is worth in the same simulation. A shot is only preferred when its score beats
 	// this, so blasts that freeze the tee sooner than doing nothing are not chosen. In an emergency

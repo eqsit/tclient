@@ -289,7 +289,7 @@ MACRO_CONFIG_INT(TcAvoidFreezeMargin, tc_avoid_freeze_margin, 0, 0, 14, CFGFLAG_
 // death with a brute-force input search and overrides direction/jump/hook/aim to
 // survive. Master switch: kx_basic_avoid_freeze.
 // This fork ships the author's tuned avoid configuration as the compiled defaults
-// (avoid on, aim-assist escape on, wide 360-degree search, debug log on).
+// (avoid on, aim-assist escape on, wide 360-degree search, debug logging off).
 MACRO_CONFIG_INT(KxBasicAvoidFreeze, kx_basic_avoid_freeze, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: predict danger and override the input to escape (master switch)")
 MACRO_CONFIG_INT(KxBafAvoidFreeze, kx_baf_avoid_freeze, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: treat freeze as danger")
 MACRO_CONFIG_INT(KxBafAvoidTeleport, kx_baf_avoid_teleport, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: treat teleporter tiles as danger")
@@ -304,24 +304,24 @@ MACRO_CONFIG_INT(KxBafFov, kx_baf_fov, 360, 5, 360, CFGFLAG_CLIENT | CFGFLAG_SAV
 MACRO_CONFIG_INT(KxBafAngles, kx_baf_angles, 22, 1, 144, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: number of aim angles to try")
 MACRO_CONFIG_INT(KxBafSilent, kx_baf_silent, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: silent aim (send to server without moving the visible crosshair)")
 MACRO_CONFIG_INT(KxBafTicks, kx_baf_ticks, 20, 1, 20, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: prediction window in ticks (1-20)")
-MACRO_CONFIG_INT(KxBafDebug, kx_baf_debug, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid debug log: 0=off 1=decisions (safe/wait/override/release/no-solution) 2=verbose every tick")
+MACRO_CONFIG_INT(KxBafDebug, kx_baf_debug, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid debug log: 0=off 1=decisions (safe/wait/override/release/no-solution) 2=verbose every tick")
 // Anti-void: rocket (grenade) counter
 // Mode 1 (normal) keeps the per-direction policy of tc_anti_void_rocket_smart_priority.
 // Mode 2 (aggressive) gives the rocket maximum priority: rocket-first for every direction,
 // arms and fires as early as a valid shot allows, and drops avoid's correction whenever the
 // rocket alone covers the whole prediction window (avoid still runs every tick as fallback).
-MACRO_CONFIG_INT(TcAntiVoidRocket, tc_anti_void_rocket, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket mode: 0=off, 1=normal, 2=aggressive (max rocket priority). If you have the grenade launcher, auto-fire a rocket so the explosion knocks you back to safety")
+MACRO_CONFIG_INT(TcAntiVoidRocket, tc_anti_void_rocket, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket mode: 0=off, 1=normal, 2=aggressive (max rocket priority). If you have the grenade launcher, auto-fire a rocket so the explosion knocks you back to safety")
 MACRO_CONFIG_INT(TcAntiVoidRocketDistance, tc_anti_void_rocket_distance, 5, 1, 32000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: how close to the void before it fires (the firing 'timing'), stored in HUNDREDTHS of a pixel so 100 = 1px (320px = 1 tile is value 32000); min 1 = 0.01px, i.e. fire at the very last hundredth of a pixel before the edge")
 MACRO_CONFIG_INT(TcAntiVoidRocketCooldown, tc_anti_void_rocket_cooldown, 1, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: minimum ticks between auto-fired rockets so it doesn't dump all your ammo at once")
 MACRO_CONFIG_INT(TcAntiVoidRocketSmartPriority, tc_anti_void_rocket_smart_priority, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: rocket-first only for freeze below; side/ceiling danger lets avoid try first and combines a rocket only when needed")
-MACRO_CONFIG_INT(TcAntiVoidRocketBoost, tc_anti_void_rocket_boost, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket (normal mode) boost: hooks save at maximum (a hook escape is preferred over an equally safe non-hook one) and the rocket adds speed along your movement direction - a partial save is fine, avoid keeps covering the rest. Only when avoid has no solution does the rocket become the save itself")
-MACRO_CONFIG_INT(TcAntiVoidRocketDebug, tc_anti_void_rocket_debug, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket debug log: 0=off 1=arm/fire/skip/suppressed 2=verbose every tick while danger is on the path")
+MACRO_CONFIG_INT(TcAntiVoidRocketBoost, tc_anti_void_rocket_boost, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket (normal mode) boost: hooks save at maximum (a hook escape is preferred over an equally safe non-hook one) and the rocket adds speed along your movement direction - a partial save is fine, avoid keeps covering the rest. Only when avoid has no solution does the rocket become the save itself")
+MACRO_CONFIG_INT(TcAntiVoidRocketDebug, tc_anti_void_rocket_debug, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket debug log: 0=off 1=arm/fire/skip/suppressed 2=verbose every tick while danger is on the path")
 
 // Anti-void: laser self-ricochet counter
 MACRO_CONFIG_INT(TcAntiVoidLaser, tc_anti_void_laser, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void: if you have the laser rifle, auto-fire at the nearest wall so the laser ricochets back into you to save you from death/void")
 MACRO_CONFIG_INT(TcAntiVoidLaserDistance, tc_anti_void_laser_distance, 10, 1, 32000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void laser: how close to the void before it fires (the firing 'timing'), stored in HUNDREDTHS of a pixel so 100 = 1px (320px = 1 tile is value 32000); min 1 = 0.01px")
 MACRO_CONFIG_INT(TcAntiVoidLaserCooldown, tc_anti_void_laser_cooldown, 1, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void laser: minimum ticks between auto-fired lasers")
-MACRO_CONFIG_INT(TcAntiVoidLaserDebug, tc_anti_void_laser_debug, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void laser debug log: 1 = detailed report on detection and firing, 2 = verbose scan logs every tick")
+MACRO_CONFIG_INT(TcAntiVoidLaserDebug, tc_anti_void_laser_debug, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void laser debug log: 1 = detailed report on detection and firing, 2 = verbose scan logs every tick")
 
 // Weapon spinner (visual only, off by default; does NOT affect aim/hook/fire)
 MACRO_CONFIG_INT(TcWeaponSpin, tc_weapon_spin, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Visually spin the weapon sprite (cosmetic only, does not affect your real aim, hook or fire direction)")

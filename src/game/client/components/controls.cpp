@@ -1150,7 +1150,11 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// Aggressive mode ignores the smart-priority option: rocket-first everywhere, planned on the
 	// player's own input so the save is a pure rocket save.
 	const bool SmartDirectionalPriority = !RocketAggressive && g_Config.m_TcAntiVoidRocketSmartPriority != 0;
-	const CNetObj_PlayerInput RocketPlanInput = !SmartDirectionalPriority || DangerBelow ? OriginalInput : m_aInputData[Dummy];
+	// Boost mode plans with the input avoid prepared (its movement and hook included): the boost is then
+	// simulated on the trajectory the tee will actually fly, so a hook that would interfere makes the
+	// shot score worse instead of being fired blindly on a free-flight plan.
+	const CNetObj_PlayerInput RocketPlanInput = RocketBoost ? m_aInputData[Dummy] :
+		(!SmartDirectionalPriority || DangerBelow ? OriginalInput : m_aInputData[Dummy]);
 
 	// Aggressive mode arms the grenade for ANY danger already on the predicted path, not only the
 	// last-moment window, so the first useful fire tick is never missed.
@@ -1262,7 +1266,11 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		// all (last resort). One clean press (released next tick). The distance/tick gates stay in
 		// force in aggressive mode too: the priority is about WHO saves, not about firing from far
 		// away (early shots hit walls that only made sense for a path the player then left).
-		const bool FireGate = DangerInFire || (AvoidNoSolution && DangerInArm);
+		// Boost mode only fires when OUR own path actually sees the danger (or avoid is completely out
+		// of options): a boost shot at a danger only avoid's model can see looked like firing at
+		// nothing, and the blast then pushed the tee somewhere the rocket plan never simulated.
+		const bool FireGate = (DangerInFire || (AvoidNoSolution && DangerInArm)) &&
+			(!RocketBoost || DangerTick >= 0 || AvoidNoSolution);
 		if(GrenadeReady && FireGate && !AvoidHookThrowTick && (m_aInputData[Dummy].m_Fire & 1) == 0)
 		{
 			// WHERE to fire: fly the grenade in every direction with the real projectile maths, detonate it
@@ -1321,19 +1329,23 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			const bool FireWindow = EffectiveDangerTick > 0 && EffectiveDangerTick <= FlightTicks + 6;
 			const bool CanLandSafely = EffectiveDangerTick > FlightTicks + 1;
 			const bool LastChance = EffectiveDangerTick > 0 && !CanLandSafely;
-			// Aggressive mode accepts a barely-positive escape push as long as the plan still survives
-			// the whole window; normal mode wants a push it can actually feel (1 px/tick). Boost mode
-			// also accepts a rocket-jump shot: a blast behind the tee that adds real speed along the
-			// travel is fired even when its escape component is small or negative, because the
-			// simulation already proved the boosted path improves on doing nothing.
-			const bool PositiveEscapeKick = RocketBoost ?
-				(RS.m_EscapeKick > 1.0f || RS.m_BoostKick > 2.0f) :
+			// A normal boost must really increase scalar speed; an escape-directed blast that brakes us
+			// is only acceptable as an emergency when avoid has no solution. The recent logs contained
+			// several nominal "boosts" with negative speedGain because escapeKick alone opened this gate.
+			// Also require the simulated path to stay alive for at least avoid's whole prediction window
+			// plus a small post-danger margin. This rejects the last-second shots that looked better than
+			// doing nothing but still entered freeze a few ticks after their explosion.
+			const int BoostSafetyTicks = std::clamp(maximum(g_Config.m_KxBafTicks, EffectiveDangerTick + 8), 1, CRocketSave::ms_Tuning.m_Horizon);
+			const bool SafeBoost = RS.m_BlastGain > 0.5f && RS.m_Score >= (float)BoostSafetyTicks;
+			const bool EmergencyEscape = AvoidNoSolution && RS.m_EscapeKick > 1.0f;
+			const bool ShotWorthFiring = RocketBoost ?
+				(SafeBoost || EmergencyEscape) :
 				(RS.m_EscapeKick > (RocketAggressive ? 0.5f : 1.0f));
 			// Aggressive mode still fires inside the normal fire window: the early shot was aimed at
 			// where the tee would have been on a path it often leaves before the blast lands, which
 			// produced rockets flying at "random" walls. Priority is applied below (rocket-first
 			// everywhere, avoid's correction dropped) without stretching the timing.
-			const bool ShouldFire = RS.m_Found && PositiveEscapeKick &&
+			const bool ShouldFire = RS.m_Found && ShotWorthFiring &&
 				((RS.m_Improves && FireWindow && (CanLandSafely || LastChance)) ||
 					Emergency);
 			if(ShouldFire)
@@ -1353,9 +1365,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 					RS.m_Improves && RS.m_Score >= (float)CRocketSave::ms_Tuning.m_Horizon &&
 					(RocketAggressive || !PlayerHookUncertain);
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
-					log_info("rocket", "  mode=%s aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f boost=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
+					log_info("rocket", "  mode=%s aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f boost=%.1f speedAfter=%.1f speedGain=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
 						RocketAloneSaves ? "rocket-first" : "rocket+avoid", RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y,
-						RS.m_Kick, RS.m_EscapeKick, RS.m_BoostKick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
+						RS.m_Kick, RS.m_EscapeKick, RS.m_BoostKick, RS.m_BlastSpeed, RS.m_BlastGain, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
 
 				// A full-window rocket plan is authoritative: discard avoid's movement/hook change for
 				// this packet. A partial plan deliberately keeps them, producing rocket+avoid. Every next
@@ -1393,9 +1405,9 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			{
 				LogRocket(4, "skip: no usable detonation before danger");
 			}
-			else if(!PositiveEscapeKick)
+			else if(!ShotWorthFiring)
 			{
-				LogRocket(10, "skip: blast impulse points toward danger");
+				LogRocket(10, "skip: shot neither escapes the danger nor speeds the tee up");
 			}
 			else if(!RS.m_Improves)
 			{
