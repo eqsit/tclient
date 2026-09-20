@@ -288,30 +288,32 @@ MACRO_CONFIG_INT(TcAvoidFreezeMargin, tc_avoid_freeze_margin, 0, 0, 14, CFGFLAG_
 // Kinetix Basic Avoid Freeze (ported from Kinetix). Predicts freeze / teleport /
 // death with a brute-force input search and overrides direction/jump/hook/aim to
 // survive. Master switch: kx_basic_avoid_freeze.
-MACRO_CONFIG_INT(KxBasicAvoidFreeze, kx_basic_avoid_freeze, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: predict danger and override the input to escape (master switch)")
+// This fork ships the author's tuned avoid configuration as the compiled defaults
+// (avoid on, aim-assist escape on, wide 360-degree search, debug log on).
+MACRO_CONFIG_INT(KxBasicAvoidFreeze, kx_basic_avoid_freeze, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: predict danger and override the input to escape (master switch)")
 MACRO_CONFIG_INT(KxBafAvoidFreeze, kx_baf_avoid_freeze, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: treat freeze as danger")
 MACRO_CONFIG_INT(KxBafAvoidTeleport, kx_baf_avoid_teleport, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: treat teleporter tiles as danger")
 MACRO_CONFIG_INT(KxBafAvoidDeath, kx_baf_avoid_death, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: treat kill tiles as danger")
 MACRO_CONFIG_INT(KxBafDirection, kx_baf_direction, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to change direction")
-MACRO_CONFIG_INT(KxBafJump, kx_baf_jump, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to change jump")
-MACRO_CONFIG_INT(KxBafHook, kx_baf_hook, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to throw a hook itself in escape combinations. OFF = avoid never throws hooks by itself")
+MACRO_CONFIG_INT(KxBafJump, kx_baf_jump, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to change jump")
+MACRO_CONFIG_INT(KxBafHook, kx_baf_hook, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to throw a hook itself in escape combinations. OFF = avoid never throws hooks by itself")
 MACRO_CONFIG_INT(KxBafReleaseHook, kx_baf_release_hook, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to release YOUR hook when the simulation says it is dragging you into danger")
 MACRO_CONFIG_INT(KxBafRehook, kx_baf_rehook, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: automatically restore a held hook after an avoid release once it is safe. OFF = keep it released until you physically release and press the hook key again")
-MACRO_CONFIG_INT(KxBafAim, kx_baf_aim, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to change aim")
-MACRO_CONFIG_INT(KxBafFov, kx_baf_fov, 90, 5, 360, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: aim FOV in degrees")
-MACRO_CONFIG_INT(KxBafAngles, kx_baf_angles, 9, 1, 144, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: number of aim angles to try")
+MACRO_CONFIG_INT(KxBafAim, kx_baf_aim, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: allowed to change aim")
+MACRO_CONFIG_INT(KxBafFov, kx_baf_fov, 360, 5, 360, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: aim FOV in degrees")
+MACRO_CONFIG_INT(KxBafAngles, kx_baf_angles, 22, 1, 144, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: number of aim angles to try")
 MACRO_CONFIG_INT(KxBafSilent, kx_baf_silent, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: silent aim (send to server without moving the visible crosshair)")
-MACRO_CONFIG_INT(KxBafTicks, kx_baf_ticks, 10, 1, 20, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: prediction window in ticks (1-20)")
-MACRO_CONFIG_INT(KxBafDebug, kx_baf_debug, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid debug log: 0=off 1=decisions (safe/wait/override/release/no-solution) 2=verbose every tick")
+MACRO_CONFIG_INT(KxBafTicks, kx_baf_ticks, 20, 1, 20, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid: prediction window in ticks (1-20)")
+MACRO_CONFIG_INT(KxBafDebug, kx_baf_debug, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid debug log: 0=off 1=decisions (safe/wait/override/release/no-solution) 2=verbose every tick")
 // Anti-void: rocket (grenade) counter
-MACRO_CONFIG_INT(TcAntiVoidRocket, tc_anti_void_rocket, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void: if you have the grenade launcher, auto-fire a rocket toward the void so the explosion knocks you back to safety (works for falling down, flying up, or drifting sideways)")
-MACRO_CONFIG_INT(TcAntiVoidRocketDistance, tc_anti_void_rocket_distance, 10, 1, 32000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: how close to the void before it fires (the firing 'timing'), stored in HUNDREDTHS of a pixel so 100 = 1px (320px = 1 tile is value 32000); min 1 = 0.01px, i.e. fire at the very last hundredth of a pixel before the edge")
+MACRO_CONFIG_INT(TcAntiVoidRocket, tc_anti_void_rocket, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void: if you have the grenade launcher, auto-fire a rocket toward the void so the explosion knocks you back to safety (works for falling down, flying up, or drifting sideways)")
+MACRO_CONFIG_INT(TcAntiVoidRocketDistance, tc_anti_void_rocket_distance, 5, 1, 32000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: how close to the void before it fires (the firing 'timing'), stored in HUNDREDTHS of a pixel so 100 = 1px (320px = 1 tile is value 32000); min 1 = 0.01px, i.e. fire at the very last hundredth of a pixel before the edge")
 MACRO_CONFIG_INT(TcAntiVoidRocketCooldown, tc_anti_void_rocket_cooldown, 1, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: minimum ticks between auto-fired rockets so it doesn't dump all your ammo at once")
 MACRO_CONFIG_INT(TcAntiVoidRocketSmartPriority, tc_anti_void_rocket_smart_priority, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket: rocket-first only for freeze below; side/ceiling danger lets avoid try first and combines a rocket only when needed")
-MACRO_CONFIG_INT(TcAntiVoidRocketDebug, tc_anti_void_rocket_debug, 0, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket debug log: 0=off 1=arm/fire/skip/suppressed 2=verbose every tick while danger is on the path")
+MACRO_CONFIG_INT(TcAntiVoidRocketDebug, tc_anti_void_rocket_debug, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void rocket debug log: 0=off 1=arm/fire/skip/suppressed 2=verbose every tick while danger is on the path")
 
 // Anti-void: laser self-ricochet counter
-MACRO_CONFIG_INT(TcAntiVoidLaser, tc_anti_void_laser, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void: if you have the laser rifle, auto-fire at the nearest wall so the laser ricochets back into you to save you from death/void")
+MACRO_CONFIG_INT(TcAntiVoidLaser, tc_anti_void_laser, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void: if you have the laser rifle, auto-fire at the nearest wall so the laser ricochets back into you to save you from death/void")
 MACRO_CONFIG_INT(TcAntiVoidLaserDistance, tc_anti_void_laser_distance, 10, 1, 32000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void laser: how close to the void before it fires (the firing 'timing'), stored in HUNDREDTHS of a pixel so 100 = 1px (320px = 1 tile is value 32000); min 1 = 0.01px")
 MACRO_CONFIG_INT(TcAntiVoidLaserCooldown, tc_anti_void_laser_cooldown, 1, 1, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void laser: minimum ticks between auto-fired lasers")
 MACRO_CONFIG_INT(TcAntiVoidLaserDebug, tc_anti_void_laser_debug, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Anti-void laser debug log: 1 = detailed report on detection and firing, 2 = verbose scan logs every tick")
