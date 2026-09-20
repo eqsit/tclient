@@ -16,7 +16,18 @@ static bool DangerAt(CCollision *pCollision, float x, float y, const CRocketSave
 	if(Tx < 0 || Ty < 0 || Tx >= pCollision->GetWidth() || Ty >= pCollision->GetHeight())
 		return true; // off the map is as deadly as it gets
 	const int Index = pCollision->GetPureMapIndex(x, y);
-	for(const int T : {pCollision->GetTileIndex(Index), pCollision->GetFrontTileIndex(Index)})
+	for(const int T : {pCollision->GetTileIndex(Index), pCollision->GetFrontTileIndex(Index), pCollision->GetSwitchType(Index)})
+		if((Cfg.m_Freeze && T == TILE_FREEZE) || (Cfg.m_DeepFreeze && T == TILE_DFREEZE) ||
+			(Cfg.m_LiveFreeze && T == TILE_LFREEZE) || (Cfg.m_Death && T == TILE_DEATH))
+			return true;
+	return false;
+}
+
+// Same test for a map index the tee crossed. The game freezes on tile CROSSINGS (CCharacter::HandleTiles
+// over Collision()->GetMapIndices(PrevPos, Pos)), so the simulation has to look at the same tiles.
+static bool DangerIndex(CCollision *pCollision, int Index, const CRocketSaveCfg &Cfg)
+{
+	for(const int T : {pCollision->GetTileIndex(Index), pCollision->GetFrontTileIndex(Index), pCollision->GetSwitchType(Index)})
 		if((Cfg.m_Freeze && T == TILE_FREEZE) || (Cfg.m_DeepFreeze && T == TILE_DFREEZE) ||
 			(Cfg.m_LiveFreeze && T == TILE_LFREEZE) || (Cfg.m_Death && T == TILE_DEATH))
 			return true;
@@ -113,13 +124,14 @@ static float Outcome(CCollision *pCollision, CCharacterCore Core, const CNetObj_
 		Core.Tick(true);
 		Core.Move();
 		Core.Quantize();
-		const int Steps = maximum(1, (int)(distance(Prev, Core.m_Pos) / 8.0f));
-		for(int s = 1; s <= Steps; ++s)
-		{
-			const vec2 P = mix(Prev, Core.m_Pos, (float)s / (float)Steps);
-			if(DangerAt(pCollision, P.x, P.y, Cfg))
+		// Look at the tiles the centre crossed this tick, exactly like the game's freeze trigger does.
+		// Point sampling every 8px misses the freeze corner a slow diagonal grind clips, which made the
+		// simulation promise saves the game never delivered.
+		for(const int Index : pCollision->GetMapIndices(Prev, Core.m_Pos))
+			if(DangerIndex(pCollision, Index, Cfg))
 				return (float)i; // frozen at tick i: the earlier, the worse
-		}
+		if(DangerAt(pCollision, Core.m_Pos.x, Core.m_Pos.y, Cfg))
+			return (float)i; // off the map is as deadly as it gets
 		// How much open space is there around the tee at this moment? Sampled in eight directions, the
 		// nearest danger wins — that is the "how far did the rocket actually throw me clear" measure.
 		// Only every other tick and in 32px steps: this score only ranks shots that all survived the
