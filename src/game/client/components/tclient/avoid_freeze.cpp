@@ -202,10 +202,11 @@ void CAvoidFreeze::ApplyOverride()
 		if(pChosen)
 			str_format(aChosen, sizeof(aChosen), " chosen[dir=%d jump=%d hook=%d aim=(%d,%d)] survival=%d/%d",
 				pChosen->m_Direction, pChosen->m_Jump, pChosen->m_Hook, pChosen->m_TargetX, pChosen->m_TargetY, Survival, SimTicks);
-		log_info("avoid", "tick=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[with_hook=%d no_hook=%d first=%d]%s",
+		log_info("avoid", "tick=%d %s pos=(%.0f,%.0f) vel=(%.0f,%.0f) danger[with_hook=%d no_hook=%d first=%d] hookkey=%d cur=(%d,%d)%s",
 			PredTick, pText, pGame->m_PredictedChar.m_Pos.x, pGame->m_PredictedChar.m_Pos.y,
 			pGame->m_PredictedChar.m_Vel.x, pGame->m_PredictedChar.m_Vel.y,
-			DangerWithCurrent, DangerWithoutHook, DangerTick, aChosen);
+			DangerWithCurrent, DangerWithoutHook, DangerTick,
+			HookKeyHeld ? 1 : 0, Current.m_TargetX, Current.m_TargetY, aChosen);
 	};
 
 	// No danger at all (with or without hook) — safe. Release any override.
