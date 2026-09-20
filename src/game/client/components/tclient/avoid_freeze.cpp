@@ -347,7 +347,10 @@ void CAvoidFreeze::ApplyOverride()
 	vec2 aAimTargets[145];
 	int AimCount = 1;
 	aAimTargets[0] = vec2((float)Current.m_TargetX, (float)Current.m_TargetY);
-	if(AllowAim)
+	// A held physical hook belongs to the player. Searching alternative angles here made the solver
+	// choose a ceiling/wall hook and later overwrite the packet aim, even though the player was aiming
+	// directly at another tee. Avoid may still release a harmful manual hook, but it never redirects it.
+	if(AllowAim && !HookKeyHeld)
 	{
 		int NumAngles = g_Config.m_KxBafAngles;
 		if(NumAngles < 1)
@@ -530,15 +533,12 @@ void CAvoidFreeze::ApplyOverride()
 			m_AutoHookHeldSinceTick = PredTick;
 		}
 
-		// Apply aim: silent (only patched into the sent packet by CControls)
-		// or visible (move the local mouse/input as well). While the player is holding the hook key the
-		// aim is usually THEIR hook throw direction and moving it would make their hooks miss — but when
-		// the escape combo throws a hook ITSELF, the aim has to be the simulated one: otherwise the game
-		// throws at the player's cursor, the hook grabs a different spot (or nothing at all) and the
-		// rescue the simulation promised never happens. That is why falling into freeze "just wasn't
-		// saved" for hook-holding players: every simulated hook rescue was fiction.
-		const bool ThrowOwnHook = BestInput.m_Hook != 0;
-		if(AllowAim && (pGame->m_Controls.m_aInputHook[g_Config.m_ClDummy] == 0 || ThrowOwnHook) &&
+		// Aim only belongs to avoid when avoid starts the hook itself. BestInput.m_Hook != 0 alone is
+		// insufficient: it is also true while the player is physically holding hook, which was the bug
+		// that redirected manual hooks toward a simulated ceiling/wall escape. Movement-only overrides
+		// never need to touch aim at all.
+		const bool ThrowOwnHook = BestInput.m_Hook != 0 && !HookKeyHeld && Current.m_Hook == 0;
+		if(AllowAim && ThrowOwnHook &&
 			(BestInput.m_TargetX != Current.m_TargetX || BestInput.m_TargetY != Current.m_TargetY))
 		{
 			const vec2 AimTarget((float)BestInput.m_TargetX, (float)BestInput.m_TargetY);
