@@ -675,7 +675,7 @@ void CGameWorld::CopyWorldClean(CGameWorld *pFrom)
 	}
 }
 
-void CGameWorld::CopyWorld(CGameWorld *pFrom)
+void CGameWorld::CopyWorld(CGameWorld *pFrom, int OnlyCharacter)
 {
 	if(pFrom == this || !pFrom)
 		return;
@@ -705,6 +705,8 @@ void CGameWorld::CopyWorld(CGameWorld *pFrom)
 	{
 		for(CEntity *pEnt = pFrom->FindLast(Type); pEnt; pEnt = pEnt->TypePrev())
 		{
+			if(Type == ENTTYPE_CHARACTER && OnlyCharacter >= 0 && ((CCharacter *)pEnt)->GetCid() != OnlyCharacter)
+				continue;
 			CEntity *pCopy = nullptr;
 			if(Type == ENTTYPE_PROJECTILE)
 				pCopy = new CProjectile(*((CProjectile *)pEnt));

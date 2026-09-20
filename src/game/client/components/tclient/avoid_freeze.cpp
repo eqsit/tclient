@@ -20,6 +20,7 @@
 
 #include <base/log.h>
 #include <base/math.h>
+#include <base/system.h>
 #include <base/vmath.h>
 
 #include <engine/shared/config.h>
@@ -67,15 +68,9 @@ int CAvoidFreeze::SimulateDangerTickDelayed(int LocalId, const CNetObj_PlayerInp
 {
 	CGameClient *pGame = GameClient();
 	CGameWorld SimWorld;
-	SimWorld.CopyWorld(&pGame->m_PredictedWorld);
-
-	for(int i = 0; i < MAX_CLIENTS; i++)
-	{
-		if(i == LocalId)
-			continue;
-		if(CCharacter *pChar = SimWorld.GetCharacterById(i))
-			delete pChar;
-	}
+	// Only our own tee is simulated: the world used to copy every character and delete the rest again,
+	// which is pure heap churn on a populated server.
+	SimWorld.CopyWorld(&pGame->m_PredictedWorld, LocalId);
 
 	CCharacter *pChar = SimWorld.GetCharacterById(LocalId);
 	if(!pChar)
@@ -131,6 +126,7 @@ void CAvoidFreeze::ApplyOverride()
 	m_SavedThisTick = false;
 	m_NoSolutionThisTick = false;
 	m_DangerTickThisTick = 0;
+	m_HasPlanThisTick = false;
 	if(!g_Config.m_KxBasicAvoidFreeze)
 	{
 		m_BlockHeldHookUntilRelease = false;
@@ -198,6 +194,7 @@ void CAvoidFreeze::ApplyOverride()
 	// No danger at all (with or without hook) — safe. Release any override.
 	if(DangerWithCurrent == 0 && DangerWithoutHook == 0)
 	{
+		m_HasPlanThisTick = true; // nothing to survive
 		LogDecision(0, "safe: no danger on the current path", 0, nullptr, 0);
 		if(m_WasOverriding)
 		{
@@ -219,11 +216,13 @@ void CAvoidFreeze::ApplyOverride()
 		const int DelayedDanger = SimulateDangerTickDelayed(LocalId, Current, 1, NoHook, SimTicks);
 		if(DelayedDanger == 0)
 		{
+			m_HasPlanThisTick = true; // hook is safe for one more tick
 			LogDecision(1, "wait: keeping the hook is safe for one more tick", DelayedDanger, nullptr, 0);
 			return; // hook is safe for now, don't intervene yet
 		}
 
-		// Can't wait — release hook NOW.
+		// Can't wait — release hook NOW. Avoid handles this itself, so the rocket stays out of it too.
+		m_HasPlanThisTick = true;
 		LogDecision(3, "RELEASE hook: it is dragging us into danger", DangerWithoutHook, nullptr, 0);
 		pInput->m_Hook = 0;
 		m_WasOverriding = true;
@@ -308,9 +307,21 @@ void CAvoidFreeze::ApplyOverride()
 		}
 	}
 
+	// Profiling: the brute force is the heaviest thing the safety features do. With kx_baf_debug on,
+	// report a search phase that took long enough to be felt as a frame hitch.
+	auto ProfLog = [&](const char *pPhase, int64_t Start) {
+		if(g_Config.m_KxBafDebug == 0)
+			return;
+		const float Ms = (float)(time_get() - Start) * 1000.0f / (float)time_freq();
+		if(Ms < 2.0f)
+			return;
+		log_info("avoid", "PROFILE: %s took %.1f ms", pPhase, Ms);
+	};
+
 	// =====================================================
 	// Test A: "Can I wait 1 more tick?"
 	// =====================================================
+	const int64_t ProfA = time_get();
 	bool CanWait = false;
 	for(int di = 0; di < DirCount && !CanWait; di++)
 	{
@@ -335,8 +346,11 @@ void CAvoidFreeze::ApplyOverride()
 		}
 	}
 
+	ProfLog("test A (wait check)", ProfA);
+
 	if(CanWait)
 	{
+		m_HasPlanThisTick = true; // avoid can still act on a later tick
 		LogDecision(1, "wait: an escape input survives after one more tick", DangerWithoutHook, nullptr, 0);
 		return;
 	}
@@ -344,18 +358,20 @@ void CAvoidFreeze::ApplyOverride()
 	// =====================================================
 	// Test B: "Act NOW" — brute-force all combos from tick 0.
 	// =====================================================
+	const int64_t ProfB = time_get();
 	bool Found = false;
+	bool Done = false; // a full-window survivor with the smallest possible diff: nothing can beat it
 	CNetObj_PlayerInput BestInput = Current;
 	int BestSurvival = -1;
 	int BestDiff = 999;
 
-	for(int di = 0; di < DirCount; di++)
+	for(int di = 0; di < DirCount && !Done; di++)
 	{
-		for(int ji = 0; ji < JumpCount; ji++)
+		for(int ji = 0; ji < JumpCount && !Done; ji++)
 		{
-			for(int hi = 0; hi < HookCount; hi++)
+			for(int hi = 0; hi < HookCount && !Done; hi++)
 			{
-				for(int ai = 0; ai < AimCount; ai++)
+				for(int ai = 0; ai < AimCount && !Done; ai++)
 				{
 					CNetObj_PlayerInput Test = Current;
 					Test.m_Direction = aDirs[di];
@@ -384,19 +400,28 @@ void CAvoidFreeze::ApplyOverride()
 						BestDiff = Diff;
 						BestInput = Test;
 						Found = true;
+						// Every combo changes at least one field (the exact current input is skipped), so
+						// a full survivor at diff 1 is optimal: later combos can at best match survival
+						// with a larger diff. Stop the brute force right here.
+						if(BestSurvival >= SimTicks && BestDiff <= 1)
+							Done = true;
 					}
 				}
 			}
 		}
 	}
 
+	ProfLog("test B (brute force)", ProfB);
+
 	// Apply if the best combo survives longer than the current input.
 	const int CurrentSurvival = CurrentDanger - 1;
 	if(Found && BestSurvival > CurrentSurvival)
 	{
 		LogDecision(2, "OVERRIDE input", DangerWithoutHook, &BestInput, BestSurvival);
-		// A full-window survivor means avoid handles this on its own; tell the rocket counter.
+		// A full-window survivor means avoid handles this on its own; tell the rocket counter. A
+		// best-effort override (partial survival) is not a plan — the rocket is allowed to help there.
 		m_SavedThisTick = BestSurvival >= SimTicks;
+		m_HasPlanThisTick = m_SavedThisTick;
 		pInput->m_Direction = BestInput.m_Direction;
 		pInput->m_Jump = BestInput.m_Jump;
 		pInput->m_Hook = BestInput.m_Hook;

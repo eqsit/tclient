@@ -1052,6 +1052,11 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// the grenade is ready and BestAim has a valid detonation, even if the rocket's own path prediction
 	// does not see the danger (avoid's model and the core simulation sometimes disagree).
 	const bool AvoidNoSolution = GameClient()->m_AvoidFreeze.NoSolution();
+	// Avoid having a plan at all (safe / can wait one more tick / released the hook / fully saved) is
+	// enough to stand down: firing then is speculative. The logs showed the overwhelming majority of
+	// shots happened while avoid was still in its "wait" state, and nothing ever came of them — just a
+	// grenade thrown away and your weapon swapped. The rocket only works when avoid is out of options.
+	const bool AvoidHandles = GameClient()->m_AvoidFreeze.HasPlan();
 
 	// avoid may see the danger while our own core prediction does not (different models). Merge its
 	// tick into the time gates; the distance gates still use our own path.
@@ -1088,7 +1093,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			SolidWithinBlast = true;
 	}
 
-	const bool NeedRocket = DangerInArm && SolidWithinBlast && !AvoidSaves;
+	const bool NeedRocket = DangerInArm && SolidWithinBlast && !AvoidSaves && !AvoidHandles;
 
 	// Use the PREDICTED active weapon (updates in ~1 tick, no ping wait) to know when the grenade is really in hand.
 	const bool GrenadeReady = GameClient()->m_PredictedChar.m_ActiveWeapon == WEAPON_GRENADE;
@@ -1169,7 +1174,16 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			Cfg.m_LiveFreeze = g_Config.m_TcAntiVoidLiveFreeze != 0;
 			Cfg.m_Death = g_Config.m_TcAntiVoidDeath != 0;
 
+			// Profiling: the aim search flies 32 grenades and runs the tee forward for the good ones;
+			// report it when it is slow enough to be felt.
+			const int64_t ProfAim = time_get();
 			const CRocketSaveAim RS = CRocketSave::BestAim(Collision(), GameClient()->m_PredictedChar, m_aInputData[Dummy], Cfg, FireDir);
+			if(g_Config.m_TcAntiVoidRocketDebug >= 1)
+			{
+				const float AimMs = (float)(time_get() - ProfAim) * 1000.0f / (float)time_freq();
+				if(AimMs >= 2.0f)
+					log_info("rocket", "PROFILE: BestAim took %.1f ms", AimMs);
+			}
 			if(RS.m_Found)
 			{
 				LogRocket(5, "FIRE rocket");

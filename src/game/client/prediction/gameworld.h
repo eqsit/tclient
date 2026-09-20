@@ -98,7 +98,10 @@ public:
 	void NetCharAdd(int ObjId, CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtended, int GameTeam, bool IsLocal);
 	void NetObjAdd(int ObjId, int ObjType, const void *pObjData, const CNetObj_EntityEx *pDataEx);
 	void NetObjEnd();
-	void CopyWorld(CGameWorld *pFrom);
+	// OnlyCharacter: when >= 0, copy just that character (client id) and skip all others. The avoid
+	// freezes simulation used to copy every character and delete the rest again, which is pure heap
+	// churn on a populated server.
+	void CopyWorld(CGameWorld *pFrom, int OnlyCharacter = -1);
 	void CopyWorldClean(CGameWorld *pFrom); // TClient
 	CEntity *FindMatch(int ObjId, int ObjType, const void *pObjData);
 	void Clear();
