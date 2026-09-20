@@ -1035,6 +1035,10 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		GameClient()->m_PredictedChar.m_aWeapons[WEAPON_GRENADE].m_Ammo != 0;
 
 	const float FireDist = (float)g_Config.m_TcAntiVoidRocketDistance / 100.0f; // stored in hundredths of a pixel, so the timing can be set right down to the edge
+	// Always judge the primary rocket plan from the player's input before avoid touched it. Avoid has
+	// already prepared a fallback in m_aInputData; we retain that fallback only for a partial rocket save.
+	const CNetObj_PlayerInput RocketInput = GameClient()->m_AvoidFreeze.HasInputBeforeOverride() ?
+		GameClient()->m_AvoidFreeze.InputBeforeOverride() : m_aInputData[Dummy];
 
 	// Where is the tee actually heading? Predict the real trajectory with the current input and find the
 	// first place it would touch danger. This is what fixes the inertia case: even when we fly fast
@@ -1050,7 +1054,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		SimCore.SetHookedPlayer(-1);
 		for(int t = 1; t <= PathTicks && DangerTick < 0; ++t)
 		{
-			SimCore.m_Input = m_aInputData[Dummy];
+			SimCore.m_Input = RocketInput;
 			const vec2 Prev = SimCore.m_Pos;
 			SimCore.Tick(true);
 			SimCore.Move();
@@ -1076,14 +1080,14 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// slow player still gets the grenade only at the last moment (no early weapon interference).
 	const vec2 Vel = GameClient()->m_PredictedChar.m_Vel;
 	const float Speed = length(Vel);
-	const float LeadDist = std::clamp(Speed * 6.0f, 48.0f, 300.0f);
+	const float LeadDist = std::clamp(Speed * 8.0f, 64.0f, 320.0f);
 
 	// Take the grenade at the last moment by default, earlier only when the current speed demands it.
 	// Fire a bit earlier at high speed: the grenade needs time to fly and the blast to land before the
 	// danger arrives, so the distance trigger grows with the distance covered in the next ticks. The
 	// minimum lead keeps the last moment from being too late even at low speed (the logs showed the
 	// rocket firing at the same tick the freeze already happened).
-	const float FireLead = std::clamp(Speed * 6.0f, 48.0f, 260.0f);
+	const float FireLead = std::clamp(Speed * 8.0f, 64.0f, 300.0f);
 
 	// Avoid still runs before us so its movement/hook correction can be included in the rocket simulation,
 	// but it no longer vetoes a shot. Rocket is the primary save: avoid remains active as a simultaneous
@@ -1106,7 +1110,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	const bool AvoidDangerInArm = AvoidOnlyDanger && (float)EffectiveDangerTick <= AvoidLeadTicks + 3.0f;
 	const bool AvoidDangerInFire = AvoidOnlyDanger && (float)EffectiveDangerTick <= AvoidLeadTicks;
 
-	const bool DangerInArm = (EffectiveDangerTick > 0 && (EffectiveDangerTick <= 6 || DangerDist <= R + FireDist + LeadDist)) || AvoidNoSolution || AvoidDangerInArm;
+	const bool DangerInArm = (EffectiveDangerTick > 0 && (EffectiveDangerTick <= 12 || DangerDist <= R + FireDist + LeadDist)) || AvoidNoSolution || AvoidDangerInArm;
 	const bool DangerInFire = (EffectiveDangerTick > 0 && (DangerDist <= R + FireDist + FireLead || EffectiveDangerTick <= 2)) || AvoidNoSolution || AvoidDangerInFire;
 	// Genuinely about to be hit and nothing else saves us: ignore the flight cooldown and fire whatever
 	// we can. The extra blast can only add velocity; waiting for the previous one is pointless here.
@@ -1228,7 +1232,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			// Profiling: the aim search flies 32 grenades and runs the tee forward for the good ones;
 			// report it when it is slow enough to be felt.
 			const int64_t ProfAim = time_get();
-			const CRocketSaveAim RS = CRocketSave::BestAim(Collision(), GameClient()->m_PredictedChar, m_aInputData[Dummy], Cfg, FireDir);
+			const CRocketSaveAim RS = CRocketSave::BestAim(Collision(), GameClient()->m_PredictedChar, RocketInput, Cfg, FireDir);
 			if(g_Config.m_TcAntiVoidRocketDebug >= 1)
 			{
 				const float AimMs = (float)(time_get() - ProfAim) * 1000.0f / (float)time_freq();
@@ -1243,19 +1247,34 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			const bool FireWindow = EffectiveDangerTick > 0 && EffectiveDangerTick <= FlightTicks + 6;
 			const bool CanLandSafely = EffectiveDangerTick > FlightTicks + 1;
 			const bool LastChance = EffectiveDangerTick > 0 && !CanLandSafely;
-			if(RS.m_Found && ((RS.m_Improves && FireWindow && CanLandSafely) || LastChance || Emergency))
+			const bool PositiveEscapeKick = RS.m_EscapeKick > 1.0f;
+			const bool ShouldFire = RS.m_Found && PositiveEscapeKick &&
+				((RS.m_Improves && FireWindow && (CanLandSafely || LastChance)) ||
+					Emergency);
+			if(ShouldFire)
 			{
 				LogRocket(5, "FIRE rocket");
+				const bool PlayerHookUncertain = RocketInput.m_Hook != 0 &&
+					(GameClient()->m_PredictedChar.HookedPlayer() >= 0 || GameClient()->m_PredictedChar.m_HookState == HOOK_FLYING);
+				const bool RocketAloneSaves = RS.m_Improves && RS.m_Score >= (float)CRocketSave::ms_Tuning.m_Horizon && !PlayerHookUncertain;
 				if(g_Config.m_TcAntiVoidRocketDebug >= 1)
-					log_info("rocket", "  aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
-						RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y, RS.m_Kick, RS.m_EscapeKick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
+					log_info("rocket", "  mode=%s aim=(%.2f,%.2f) blast=(%.0f,%.0f) kick=%.1f escapeKick=%.1f flight=%.0f score=%.1f base=%.1f plain=%.1f",
+						RocketAloneSaves ? "rocket-first" : "rocket+avoid", RS.m_Dir.x, RS.m_Dir.y, RS.m_Blast.x, RS.m_Blast.y,
+						RS.m_Kick, RS.m_EscapeKick, RS.m_BlastTicks, RS.m_Score, RS.m_BaseScore, RS.m_PlainScore);
 
-				// Rocket aim wins only for the shot packet. If avoid tried to launch a fresh hook in the
-				// same packet, suppress that launch: otherwise the hook is launched along the rocket aim
-				// instead of the direction avoid simulated. Existing attached/flying hooks are untouched,
-				// so movement and hook can still combine with the blast.
-				if(m_AvoidAimActive && m_aInputData[Dummy].m_Hook != 0 &&
-					GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE)
+				// A full-window rocket plan is authoritative: discard avoid's movement/hook change for
+				// this packet. A partial plan deliberately keeps them, producing rocket+avoid. Every next
+				// tick is evaluated afresh, so avoid immediately takes over if the explosion was not enough.
+				if(RocketAloneSaves)
+				{
+					m_aInputData[Dummy].m_Direction = RocketInput.m_Direction;
+					m_aInputData[Dummy].m_Jump = RocketInput.m_Jump;
+					m_aInputData[Dummy].m_Hook = RocketInput.m_Hook;
+					GameClient()->m_AvoidFreeze.DiscardOverrideForRocket();
+				}
+				// Never launch a new hook along the temporary rocket aim. Existing attached/flying hooks
+				// are left alone and can combine with the blast.
+				if(m_aInputData[Dummy].m_Hook != 0 && GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE)
 					m_aInputData[Dummy].m_Hook = 0;
 				m_AvoidAimActive = false;
 
@@ -1277,6 +1296,10 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			else if(!RS.m_Found)
 			{
 				LogRocket(4, "skip: no usable detonation before danger");
+			}
+			else if(!PositiveEscapeKick)
+			{
+				LogRocket(10, "skip: blast impulse points toward danger");
 			}
 			else if(!RS.m_Improves)
 			{

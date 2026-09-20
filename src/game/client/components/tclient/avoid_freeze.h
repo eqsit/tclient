@@ -35,6 +35,12 @@ public:
 	// was applied. The rocket counter records this for diagnostics but may still take the
 	// primary save; avoid's input then acts as a simultaneous movement fallback.
 	bool WouldSave() const { return m_SavedThisTick; }
+	// Input exactly as the player supplied it before avoid changed movement/hook/aim this tick.
+	// Rocket uses this to evaluate its primary save independently, then keeps avoid's result only
+	// when the rocket by itself is not a full-window solution.
+	bool HasInputBeforeOverride() const { return m_HasInputBeforeOverride; }
+	const CNetObj_PlayerInput &InputBeforeOverride() const { return m_InputBeforeOverride; }
+	void DiscardOverrideForRocket();
 
 private:
 	// Returns the tick (1-based) at which danger first occurs, 0 if none.
@@ -53,6 +59,8 @@ private:
 	bool m_BlockHeldHookUntilRelease = false;
 	// Result of this tick's evaluation, read by the rocket counter (WouldSave).
 	bool m_SavedThisTick = false;
+	bool m_HasInputBeforeOverride = false;
+	CNetObj_PlayerInput m_InputBeforeOverride{};
 	// True when the brute force found no input that avoids the danger at all this tick.
 	bool m_NoSolutionThisTick = false;
 	// First tick danger appears in avoid's simulation (0 = safe). The rocket uses it when its own

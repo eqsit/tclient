@@ -129,6 +129,7 @@ void CAvoidFreeze::ApplyOverride()
 	m_SavedThisTick = false;
 	m_NoSolutionThisTick = false;
 	m_DangerTickThisTick = 0;
+	m_HasInputBeforeOverride = false;
 	if(!g_Config.m_KxBasicAvoidFreeze)
 	{
 		m_BlockHeldHookUntilRelease = false;
@@ -155,6 +156,8 @@ void CAvoidFreeze::ApplyOverride()
 	else if(m_BlockHeldHookUntilRelease)
 		pInput->m_Hook = 0;
 	const CNetObj_PlayerInput Current = *pInput;
+	m_InputBeforeOverride = Current;
+	m_HasInputBeforeOverride = true;
 
 	int SimTicks = g_Config.m_KxBafTicks;
 	if(SimTicks < 1)
@@ -493,4 +496,14 @@ void CAvoidFreeze::ApplyOverride()
 		m_NoSolutionThisTick = true;
 		LogDecision(4, "no safe input found: leaving momentum alone", DangerWithoutHook, nullptr, 0);
 	}
+}
+
+void CAvoidFreeze::DiscardOverrideForRocket()
+{
+	// Rocket proved the player's unmodified input safe for the full horizon, so the avoid action
+	// prepared earlier in this tick was never sent. Its ownership/latch state must not leak into the
+	// next tick and release or block a hook that avoid did not actually launch/retract.
+	m_WasOverriding = false;
+	m_OverrideHook = 0;
+	m_BlockHeldHookUntilRelease = false;
 }
