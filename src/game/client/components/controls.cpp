@@ -1067,12 +1067,8 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// Boost mode: avoid's hook throw goes out first, the rocket boosts on the next tick. On the tick
 	// avoid actually launches a hook the aim in the packet belongs to that hook, so the rocket holds
 	// its fire until the hook is flying/attached (then the aim no longer matters for it).
-	const bool HookIdle = GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE;
-	const bool AvoidHookThrowTick = RocketBoost && OriginalInput.m_Hook == 0 && m_aInputData[Dummy].m_Hook != 0 && HookIdle;
-	// A hook and a rocket share the same aim in one input packet. If the player starts a manual hook
-	// on this tick, changing the target to the rocket direction either misses the tee or catches a
-	// ceiling. Delay the rocket by one tick; the already-launched hook keeps its own direction.
-	const bool ManualHookThrowTick = OriginalInput.m_Hook != 0 && HookIdle;
+	const bool AvoidHookThrowTick = RocketBoost && OriginalInput.m_Hook == 0 && m_aInputData[Dummy].m_Hook != 0 &&
+		GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE;
 
 	// Where is the tee actually heading? Predict the real trajectory with the current input and find the
 	// first place it would touch danger. This is what fixes the inertia case: even when we fly fast
@@ -1275,7 +1271,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		// nothing, and the blast then pushed the tee somewhere the rocket plan never simulated.
 		const bool FireGate = (DangerInFire || (AvoidNoSolution && DangerInArm)) &&
 			(!RocketBoost || DangerTick >= 0 || AvoidNoSolution);
-		if(GrenadeReady && FireGate && !AvoidHookThrowTick && !ManualHookThrowTick && (m_aInputData[Dummy].m_Fire & 1) == 0)
+		if(GrenadeReady && FireGate && !AvoidHookThrowTick && (m_aInputData[Dummy].m_Fire & 1) == 0)
 		{
 			// WHERE to fire: fly the grenade in every direction with the real projectile maths, detonate it
 			// on the real surface, apply the real explosion force and run the tee forward. The direction that
@@ -1333,17 +1329,13 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 			const bool FireWindow = EffectiveDangerTick > 0 && EffectiveDangerTick <= FlightTicks + 6;
 			const bool CanLandSafely = EffectiveDangerTick > FlightTicks + 1;
 			const bool LastChance = EffectiveDangerTick > 0 && !CanLandSafely;
-			// A normal boost must really increase scalar speed; an escape-directed blast that brakes us
-			// is only acceptable as an emergency when avoid has no solution. The recent logs contained
-			// several nominal "boosts" with negative speedGain because escapeKick alone opened this gate.
-			// Also require the simulated path to stay alive for at least avoid's whole prediction window
-			// plus a small post-danger margin. This rejects the last-second shots that looked better than
-			// doing nothing but still entered freeze a few ticks after their explosion.
-			const int BoostSafetyTicks = std::clamp(maximum(g_Config.m_KxBafTicks, EffectiveDangerTick + 8), 1, CRocketSave::ms_Tuning.m_Horizon);
-			const bool SafeBoost = RS.m_BlastGain > 0.5f && RS.m_Score >= (float)BoostSafetyTicks;
-			const bool EmergencyEscape = AvoidNoSolution && RS.m_EscapeKick > 1.0f;
+			// Boost mode fires any shot that is actually a boost: the explosion adds speed (any
+			// direction, pushing toward the danger is allowed) or the shot escapes the danger properly.
+			// The plan still has to improve on doing nothing (checked below), so a blast the simulation
+			// rates as suicide is not fired. Aggressive mode accepts a barely-positive escape push as
+			// long as the plan survives the whole window; normal mode wants a push it can feel.
 			const bool ShotWorthFiring = RocketBoost ?
-				(SafeBoost || EmergencyEscape) :
+				(RS.m_BlastGain > 1.0f || RS.m_EscapeKick > 1.0f) :
 				(RS.m_EscapeKick > (RocketAggressive ? 0.5f : 1.0f));
 			// Aggressive mode still fires inside the normal fire window: the early shot was aimed at
 			// where the tee would have been on a path it often leaves before the blast lands, which
@@ -1385,7 +1377,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				}
 				// Never launch a new hook along the temporary rocket aim. Existing attached/flying hooks
 				// are left alone and can combine with the blast.
-				if(m_aInputData[Dummy].m_Hook != 0 && OriginalInput.m_Hook == 0 && HookIdle)
+				if(m_aInputData[Dummy].m_Hook != 0 && GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE)
 					m_aInputData[Dummy].m_Hook = 0;
 				m_AvoidAimActive = false;
 

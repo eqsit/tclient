@@ -266,9 +266,11 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 	// harder. The nearest solid surface within that arc is the one that hits hardest, and the tie-break
 	// below picks it.
 	const int RayCount = Rays > 0 ? Rays : ms_Tuning.m_Rays;
-	auto Consider = [&](vec2 Dir) {
+	for(int i = 0; i < RayCount; ++i)
+	{
+		const vec2 Dir = direction((float)i / (float)RayCount * 2.0f * pi);
 		if(SpeedNow > 1.0f && dot(MoveDir, Dir) < ms_Tuning.m_InertiaDot)
-			return; // behind us: firing there would shove us further into what we are flying at
+			continue; // behind us: firing there would shove us further into what we are flying at
 		vec2 Blast;
 		float Kick = 0.0f;
 		float EscapeKick = 0.0f;
@@ -335,21 +337,6 @@ CRocketSaveAim CRocketSave::BestAim(CCollision *pCollision, const CCharacterCore
 			Out.m_BlastTicks = BlastTicks;
 			Out.m_Found = true;
 		}
-	};
-	for(int i = 0; i < RayCount; ++i)
-	{
-		Consider(direction((float)i / (float)RayCount * 2.0f * pi));
-	}
-	// The full-circle fan finds the correct wall/side. Six cheap local probes then refine that result
-	// to quarter-ray precision, giving boost mode a much closer-to-optimal speed without multiplying
-	// the expensive search or making frame time spike.
-	if(Cfg.m_Boost && Out.m_Found)
-	{
-		const float BestAngle = std::atan2(Out.m_Dir.y, Out.m_Dir.x);
-		const float QuarterRay = 2.0f * pi / (float)RayCount / 4.0f;
-		for(int i = -3; i <= 3; ++i)
-			if(i != 0)
-				Consider(direction(BestAngle + (float)i * QuarterRay));
 	}
 	// A shot that beats doing nothing is the normal case; the caller may still fire the least-bad valid
 	// shot when avoid is out of options entirely, so the two are reported separately.
