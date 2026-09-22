@@ -1067,12 +1067,8 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 	// Boost mode: avoid's hook throw goes out first, the rocket boosts on the next tick. On the tick
 	// avoid actually launches a hook the aim in the packet belongs to that hook, so the rocket holds
 	// its fire until the hook is flying/attached (then the aim no longer matters for it).
-	const bool HookIdle = GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE;
-	const bool AvoidHookThrowTick = RocketBoost && OriginalInput.m_Hook == 0 && m_aInputData[Dummy].m_Hook != 0 && HookIdle;
-	// A hook and a rocket share the same aim in one input packet. If the player starts a manual hook
-	// on this tick, changing the target to the rocket direction either misses the tee or catches a
-	// ceiling. Delay the rocket by one tick; the already-launched hook keeps its own direction.
-	const bool ManualHookThrowTick = OriginalInput.m_Hook != 0 && HookIdle;
+	const bool AvoidHookThrowTick = RocketBoost && OriginalInput.m_Hook == 0 && m_aInputData[Dummy].m_Hook != 0 &&
+		GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE;
 
 	// Where is the tee actually heading? Predict the real trajectory with the current input and find the
 	// first place it would touch danger. This is what fixes the inertia case: even when we fly fast
@@ -1275,7 +1271,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 		// nothing, and the blast then pushed the tee somewhere the rocket plan never simulated.
 		const bool FireGate = (DangerInFire || (AvoidNoSolution && DangerInArm)) &&
 			(!RocketBoost || DangerTick >= 0 || AvoidNoSolution);
-		if(GrenadeReady && FireGate && !AvoidHookThrowTick && !ManualHookThrowTick && (m_aInputData[Dummy].m_Fire & 1) == 0)
+		if(GrenadeReady && FireGate && !AvoidHookThrowTick && (m_aInputData[Dummy].m_Fire & 1) == 0)
 		{
 			// WHERE to fire: fly the grenade in every direction with the real projectile maths, detonate it
 			// on the real surface, apply the real explosion force and run the tee forward. The direction that
@@ -1385,7 +1381,7 @@ void CControls::ApplyAntiVoidRocket(bool Suppressed)
 				}
 				// Never launch a new hook along the temporary rocket aim. Existing attached/flying hooks
 				// are left alone and can combine with the blast.
-				if(m_aInputData[Dummy].m_Hook != 0 && OriginalInput.m_Hook == 0 && HookIdle)
+				if(m_aInputData[Dummy].m_Hook != 0 && GameClient()->m_PredictedChar.m_HookState == HOOK_IDLE)
 					m_aInputData[Dummy].m_Hook = 0;
 				m_AvoidAimActive = false;
 
