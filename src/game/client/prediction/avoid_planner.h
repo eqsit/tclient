@@ -30,6 +30,8 @@ public:
 		bool m_Hook = true;
 		bool m_Aim = true;
 		bool m_Rocket = true;
+		bool m_Boost = false;
+		int m_BoostVertical = 0; // -1 up, +1 down, 0 follows jump/momentum
 		bool m_Freeze = true;
 		bool m_Death = true;
 		bool m_Teleport = false;
@@ -72,6 +74,7 @@ public:
 		int m_ShotTick = 0;
 		int m_BlastTick = 0;
 		vec2 m_BlastPos{0, 0};
+		vec2 m_Vel{0, 0};
 		int m_Survival = 0;
 	};
 	struct SDecision
@@ -90,6 +93,9 @@ public:
 		int m_RejectFlight = 0;
 		int m_RejectDanger = 0;
 		int m_RejectTurn = 0;
+		vec2 m_BoostDirection{0, 0};
+		float m_BoostScore = 0;
+		bool m_BoostLongSafe = false;
 	};
 	struct SWeaponReturn
 	{
@@ -115,6 +121,7 @@ public:
 	SStep Step(CGameWorld &World, int LocalId, const CNetObj_PlayerInput &Current, const SConfig &Config, SFeedback &Feedback);
 	static const char *ModeName(EMode Mode);
 	static CNetObj_PlayerInput InputAt(const SPlan &Plan, const CNetObj_PlayerInput &Current, int Tick);
+	static void PreserveBoostReleaseAim(CNetObj_PlayerInput &Input, const CNetObj_PlayerInput &Shot);
 	static SPlan ReturnControlPlan(const CNetObj_PlayerInput &Current, bool OwnHook);
 	static SPlan RemainingPlan(const SPlan &Plan, const CNetObj_PlayerInput &Current, int Elapsed);
 	SProbe Simulate(CGameWorld &World, int LocalId, const CNetObj_PlayerInput &Current, const SPlan &Plan, int Ticks, const SConfig &Config);

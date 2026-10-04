@@ -262,7 +262,14 @@ int CControls::SnapInput(int *pData)
 		// Opening the F12 settings overlay must not suspend a rescue.
 		if(m_aInputData[g_Config.m_ClDummy].m_PlayerFlags & PLAYERFLAG_IN_MENU)
 		{
+			const bool BoostSave = g_Config.m_KxBasicAvoidFreeze && g_Config.m_TcRocketBoost;
+			if(BoostSave)
+				m_aInputData[g_Config.m_ClDummy].m_Fire = m_aInputFire[g_Config.m_ClDummy];
 			GameClient()->m_AvoidFreeze.ApplyOverride();
+			// Boost saves and their release must reach the server with the
+			// same input/aim as prediction, including while F12 is open.
+			if(BoostSave)
+				mem_copy(pData, &m_aInputData[g_Config.m_ClDummy], sizeof(m_aInputData[0]));
 			Send = Send || g_Config.m_KxBasicAvoidFreeze;
 		}
 

@@ -3005,6 +3005,7 @@ void CMenus::RenderAvoidMenu(CUIRect Screen)
 	Slider(Left, "Hook FOV", g_Config.m_KxBafFov, 5, 360);
 	Slider(Left, "Avoid horizon (ticks)", g_Config.m_KxBafTicks, 2, 20);
 	Check(Right, "Rocket priority", g_Config.m_TcRocketAvoid);
+	Check(Right, "Boost: faster rocket saves", g_Config.m_TcRocketBoost);
 	Slider(Right, "Rocket validation (ticks)", g_Config.m_TcRocketAvoidTicks, 20, 60);
 	Slider(Right, "Shot safety lead (ticks)", g_Config.m_TcRocketAvoidLead, 1, 4);
 	Slider(Right, "Max flight to blast (ticks)", g_Config.m_TcRocketAvoidFlight, 1, 8);

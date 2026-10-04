@@ -19,6 +19,8 @@ class CAvoidFreeze : public CComponent
 		int m_AttackBeforeShot = -1;
 		int m_PerfLogTick = -10000;
 		bool m_ShotPending = false;
+		bool m_BoostAimPending = false;
+		CNetObj_PlayerInput m_BoostShot{};
 		bool m_Frozen = false;
 		bool m_ServerFrozen = false;
 		CNetObj_PlayerInput m_Output{};
@@ -31,10 +33,14 @@ class CAvoidFreeze : public CComponent
 		CAvoidPlanner::EMode m_LogMode = CAvoidPlanner::EMode::NO_SOLUTION;
 	};
 	SState m_aState[NUM_DUMMIES];
+	int m_aBoostUp[NUM_DUMMIES]{};
+	int m_aBoostDown[NUM_DUMMIES]{};
 	static void ConToggleMenu(IConsole::IResult *pResult, void *pUserData);
 	static void ConToggleAvoid(IConsole::IResult *pResult, void *pUserData);
 	static void ConStatus(IConsole::IResult *pResult, void *pUserData);
-	static CAvoidPlanner::SConfig Config();
+	static void ConBoostUp(IConsole::IResult *pResult, void *pUserData);
+	static void ConBoostDown(IConsole::IResult *pResult, void *pUserData);
+	CAvoidPlanner::SConfig Config() const;
 
 public:
 	int Sizeof() const override { return sizeof(*this); }

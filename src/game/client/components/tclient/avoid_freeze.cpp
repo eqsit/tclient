@@ -13,7 +13,7 @@
 
 using EMode = CAvoidPlanner::EMode;
 
-CAvoidPlanner::SConfig CAvoidFreeze::Config()
+CAvoidPlanner::SConfig CAvoidFreeze::Config() const
 {
 	CAvoidPlanner::SConfig C;
 	C.m_Ticks = g_Config.m_KxBafTicks;
@@ -27,6 +27,8 @@ CAvoidPlanner::SConfig CAvoidFreeze::Config()
 	C.m_Hook = g_Config.m_KxBafHook;
 	C.m_Aim = g_Config.m_KxBafAim;
 	C.m_Rocket = g_Config.m_TcRocketAvoid;
+	C.m_Boost = g_Config.m_TcRocketBoost;
+	C.m_BoostVertical = m_aBoostDown[g_Config.m_ClDummy] - m_aBoostUp[g_Config.m_ClDummy];
 	C.m_Freeze = g_Config.m_KxBafAvoidFreeze;
 	C.m_Death = g_Config.m_KxBafAvoidDeath;
 	C.m_Teleport = g_Config.m_KxBafAvoidTeleport;
@@ -49,10 +51,20 @@ void CAvoidFreeze::ConStatus(IConsole::IResult *pResult, void *pUserData)
 {
 	auto *pSelf = static_cast<CAvoidFreeze *>(pUserData);
 	const auto &S = pSelf->m_aState[g_Config.m_ClDummy];
-	log_info("avoid", "[STATUS] version=kog-kinetix-8 enabled=%d rocket=%d hook=%d horizon=%d rocket_horizon=%d lead=%d mode=%s tick=%d sims=%d sim_ticks=%d debug=%d",
+	log_info("avoid", "[STATUS] version=kog-kinetix-10-boost-save-local enabled=%d rocket=%d hook=%d horizon=%d rocket_horizon=%d lead=%d mode=%s tick=%d sims=%d sim_ticks=%d debug=%d boost=%d",
 		g_Config.m_KxBasicAvoidFreeze, g_Config.m_TcRocketAvoid, g_Config.m_KxBafHook, g_Config.m_KxBafTicks,
 		g_Config.m_TcRocketAvoidTicks, g_Config.m_TcRocketAvoidLead, CAvoidPlanner::ModeName(S.m_Decision.m_Mode), S.m_Tick,
-		S.m_Decision.m_Calls, S.m_Decision.m_SimTicks, g_Config.m_KxBafDebug);
+		S.m_Decision.m_Calls, S.m_Decision.m_SimTicks, g_Config.m_KxBafDebug, g_Config.m_TcRocketBoost);
+}
+
+void CAvoidFreeze::ConBoostUp(IConsole::IResult *pResult, void *pUserData)
+{
+	static_cast<CAvoidFreeze *>(pUserData)->m_aBoostUp[g_Config.m_ClDummy] = pResult->GetInteger(0) != 0;
+}
+
+void CAvoidFreeze::ConBoostDown(IConsole::IResult *pResult, void *pUserData)
+{
+	static_cast<CAvoidFreeze *>(pUserData)->m_aBoostDown[g_Config.m_ClDummy] = pResult->GetInteger(0) != 0;
 }
 
 void CAvoidFreeze::OnConsoleInit()
@@ -60,12 +72,16 @@ void CAvoidFreeze::OnConsoleInit()
 	Console()->Register("tc_toggle_menu", "", CFGFLAG_CLIENT, ConToggleMenu, this, "Open/close avoid menu (F12)");
 	Console()->Register("tc_avoid_toggle", "", CFGFLAG_CLIENT, ConToggleAvoid, this, "Toggle Kinetix avoid and rocket rescue");
 	Console()->Register("tc_avoid_status", "", CFGFLAG_CLIENT, ConStatus, this, "Print avoid configuration and last decision");
+	Console()->Register("+tc_boost_up", "i", CFGFLAG_CLIENT, ConBoostUp, this, "Hold to prefer upward rocket saves");
+	Console()->Register("+tc_boost_down", "i", CFGFLAG_CLIENT, ConBoostDown, this, "Hold to prefer downward rocket saves");
 }
 
 void CAvoidFreeze::OnReset()
 {
 	for(auto &State : m_aState)
 		State = SState();
+	for(int Dummy = 0; Dummy < NUM_DUMMIES; Dummy++)
+		m_aBoostUp[Dummy] = m_aBoostDown[Dummy] = 0;
 }
 
 void CAvoidFreeze::OnPlayerDeath()
@@ -139,7 +155,7 @@ void CAvoidFreeze::ApplyOverride()
 			CServerInfo Info;
 			Client()->GetServerInfo(&Info);
 			const auto *pTune = pGame->m_PredictedWorld.GetTuning(pLocal->GetOverriddenTuneZone());
-			log_info("avoid", "[SESSION] version=kog-kinetix-8 dummy=%d local=%d server=%s map=%s type=%s zone=%d grenade_speed=%.3f curvature=%.3f explosion=%.3f hook_drag=%.3f",
+			log_info("avoid", "[SESSION] version=kog-kinetix-10-boost-save-local dummy=%d local=%d server=%s map=%s type=%s zone=%d grenade_speed=%.3f curvature=%.3f explosion=%.3f hook_drag=%.3f",
 				Dummy, LocalId, Info.m_aName, Info.m_aMap, Info.m_aGameType, pLocal->GetOverriddenTuneZone(), (float)pTune->m_GrenadeSpeed, (float)pTune->m_GrenadeCurvature, (float)pTune->m_ExplosionStrength, (float)pTune->m_HookDragAccel);
 		}
 	}
@@ -232,6 +248,11 @@ void CAvoidFreeze::ApplyOverride()
 		}
 		S.m_ShotPending = true;
 		S.m_FireTick = Tick;
+		if(Cfg.m_Boost)
+		{
+			S.m_BoostAimPending = true;
+			S.m_BoostShot = Input;
+		}
 		const int FireDelay = pWorld->GetTuning(pLocal->GetOverriddenTuneZone())->GetWeaponFireDelay(WEAPON_GRENADE) * (int)SERVER_TICK_SPEED;
 		// A late snapshot can temporarily restore the pre-shot attack tick
 		// and a zero native reload. Keep the real tuned cooldown independently.
@@ -264,6 +285,14 @@ void CAvoidFreeze::ApplyOverride()
 		pGame->m_Controls.m_aInputFire[Dummy] = (Input.m_Fire + (pGame->m_Controls.m_aInputFireHeld[Dummy] ? 0 : 1)) & INPUT_STATE_MASK;
 	}
 
+	if(S.m_BoostAimPending)
+	{
+		if(!Cfg.m_Boost || ServerCore.m_AttackTick > S.m_ServerAttackBeforeShot ||
+			Tick - S.m_FireTick > SERVER_TICK_SPEED || SelectionSerial != S.m_OutputSelectionSerial)
+			S.m_BoostAimPending = false;
+		else if(Tick > S.m_FireTick)
+			CAvoidPlanner::PreserveBoostReleaseAim(Input, S.m_BoostShot);
+	}
 	const double Ms = (time_get_impl() - Start) * 1000.0 / time_freq();
 	if(g_Config.m_KxBafDebug && (Decision.m_Mode != S.m_LogMode || g_Config.m_KxBafDebug >= 2 || Decision.m_Mode == EMode::ROCKET || Decision.m_Mode == EMode::ROCKET_HOOK))
 	{
@@ -279,6 +308,9 @@ void CAvoidFreeze::ApplyOverride()
 			log_info("avoid", "[ROCKET] tick=%d candidates=%d reject[shot=%d flight=%d danger=%d turn=%d] selected=%d sent=%d delay=%d shot_tick=%d blast_tick=%d blast=(%.2f,%.2f) reload=%d",
 				Tick, Decision.m_RocketCandidates, Decision.m_RejectShot, Decision.m_RejectFlight, Decision.m_RejectDanger, Decision.m_RejectTurn,
 				Decision.m_Plan.m_Rocket, (Decision.m_Mode == EMode::ROCKET || Decision.m_Mode == EMode::ROCKET_HOOK) && !Decision.m_Plan.m_SwitchTicks, Decision.m_Plan.m_Delay, Decision.m_Result.m_ShotTick, Decision.m_Result.m_BlastTick, Decision.m_Result.m_BlastPos.x, Decision.m_Result.m_BlastPos.y, pLocal->GetReloadTimer());
+		if(Cfg.m_Boost && Decision.m_Plan.m_Rocket && !Decision.m_Plan.m_Delay)
+			log_info("avoid", "[BOOST] tick=%d intent=(%.3f,%.3f) gain=%.3f long_safe=%d", Tick,
+				Decision.m_BoostDirection.x, Decision.m_BoostDirection.y, Decision.m_BoostScore, Decision.m_BoostLongSafe);
 	}
 	if(g_Config.m_KxBafDebug && Ms > 5 && Tick - S.m_PerfLogTick >= SERVER_TICK_SPEED)
 	{

@@ -17,6 +17,26 @@
 #include <cmath>
 #include <limits>
 
+namespace
+{
+	vec2 BoostDirection(const CNetObj_PlayerInput &Input, const CCharacterCore &Core, int Vertical)
+	{
+		vec2 Intent = Core.m_Vel;
+		if(Input.m_Direction)
+			Intent.x = Input.m_Direction * std::max(8.0f, std::abs(Intent.x));
+		if(Vertical)
+			Intent.y = Vertical * std::max(8.0f, std::abs(Intent.y));
+		else if(Input.m_Jump && !(Core.m_Jumped & 1))
+			Intent.y = -std::max(8.0f, std::abs(Intent.y));
+		return length(Intent) > 0.5f ? normalize(Intent) : vec2(0, 0);
+	}
+
+	float TravelScore(const CAvoidPlanner::SProbe &Probe, vec2 Start, vec2 Direction, int Ticks)
+	{
+		return dot(Probe.m_Pos - Start, Direction) / std::max(1, Ticks) + 0.5f * dot(Probe.m_Vel, Direction);
+	}
+}
+
 const char *CAvoidPlanner::ModeName(EMode Mode)
 {
 	switch(Mode)
@@ -87,6 +107,17 @@ CNetObj_PlayerInput CAvoidPlanner::InputAt(const SPlan &Plan, const CNetObj_Play
 		}
 	}
 	return Input;
+}
+
+void CAvoidPlanner::PreserveBoostReleaseAim(CNetObj_PlayerInput &Input, const CNetObj_PlayerInput &Shot)
+{
+	// A late/dropped press can reach the server as the even release counter.
+	// That counter still contains the press: keep its verified rocket aim.
+	// Leave hooks and any subsequent manual fire untouched.
+	if(!(Shot.m_Fire & 1) || Input.m_Hook || Input.m_Fire != ((Shot.m_Fire + 1) & INPUT_STATE_MASK))
+		return;
+	Input.m_TargetX = Shot.m_TargetX;
+	Input.m_TargetY = Shot.m_TargetY;
 }
 
 CAvoidPlanner::SProbe CAvoidPlanner::Simulate(CGameWorld &World, int LocalId, const CNetObj_PlayerInput &Current, const SPlan &Plan, int Ticks, const SConfig &Config)
@@ -160,6 +191,7 @@ CAvoidPlanner::SProbe CAvoidPlanner::Simulate(CGameWorld &World, int LocalId, co
 		{
 			Result.m_Pos = pChar->m_Pos;
 			const auto *pCore = pChar->Core();
+			Result.m_Vel = pCore->m_Vel;
 			if(Config.m_Freeze && (pChar->m_FreezeTime > 0 || pCore->m_DeepFrozen || pCore->m_LiveFrozen || pCore->m_IsInFreeze))
 				pDanger = "freeze";
 			const int Index = Sim.Collision()->GetPureMapIndex(pChar->m_Pos);
@@ -622,6 +654,61 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 	{
 		if(Decision.m_Mode != EMode::WAIT)
 			TryWait(Decision.m_Plan);
+		// The original rescue is found first, with its original budget/order.
+		// Only then improve its rocket aim; movement, hooks and deadlines stay
+		// under the original avoid. Failure here keeps that verified rescue.
+		if(Config.m_Boost && Decision.m_Mode != EMode::WAIT && !Decision.m_Plan.m_SwitchTicks && !Exhausted())
+		{
+			const auto Original = Decision.m_Plan;
+			const auto OriginalProbe = Decision.m_Result;
+			const vec2 Intent = BoostDirection(Current, *pLocal->Core(), Config.m_BoostVertical);
+			Decision.m_BoostDirection = Intent;
+			if(length(Intent) > 0.5f)
+			{
+				const auto OriginalLong = Simulate(World, LocalId, Current, Original, RocketTicks, Config);
+				const int ScoreTicks = OriginalLong.m_Danger ? OriginalProbe.m_Survival : RocketTicks;
+				const float BaseScore = TravelScore(OriginalLong.m_Danger ? OriginalProbe : OriginalLong, pLocal->m_Pos, Intent, ScoreTicks);
+				float BestScore = BaseScore + 0.5f;
+				const float Opposite = std::atan2(-Intent.y, -Intent.x);
+				const int Samples = std::clamp(Config.m_RocketAngles, 8, 96);
+				for(int a = 0; a < Samples && !Exhausted(); a++)
+				{
+					auto Shot = Original;
+					const int Index = (a + 1) / 2 * (a % 2 ? 1 : -1);
+					const float BoostAngle = Opposite + 2 * pi * Index / Samples;
+					Shot.m_RocketAim = vec2(std::cos(BoostAngle), std::sin(BoostAngle)) * 1000;
+					const auto Long = Simulate(World, LocalId, Current, Shot, RocketTicks, Config);
+					if(Long.m_ShotTick != Shot.m_SwitchTicks + 1 || !Long.m_BlastTick ||
+						Long.m_BlastTick - Long.m_ShotTick + 1 > Config.m_MaxFlight || Long.m_BlastTick > OriginalProbe.m_BlastTick ||
+						Long.m_Danger || Exhausted())
+						continue;
+					const auto Probe = ScoreTicks == RocketTicks ? Long : Simulate(World, LocalId, Current, Shot, ScoreTicks, Config);
+					const float Score = TravelScore(Probe, pLocal->m_Pos, Intent, ScoreTicks);
+					if(Probe.m_Danger || Score <= BestScore)
+						continue;
+					bool Safe = true;
+					for(int Dir : {-1, 0, 1})
+					{
+						if(Exhausted())
+						{
+							Safe = false;
+							break;
+						}
+						auto Turn = Current;
+						Turn.m_Direction = Dir;
+						if(Simulate(World, LocalId, Turn, Shot, RocketTicks, Config).m_Danger)
+							Safe = false;
+					}
+					if(!Safe)
+						continue;
+					BestScore = Score;
+					Decision.m_Plan = Shot;
+					Decision.m_Result = Probe;
+					Decision.m_BoostScore = Score - BaseScore;
+					Decision.m_BoostLongSafe = !Long.m_Danger;
+				}
+			}
+		}
 		return Finish();
 	}
 	if(pPrevious && !pPrevious->m_Rocket)

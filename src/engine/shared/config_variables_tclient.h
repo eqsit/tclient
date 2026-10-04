@@ -298,6 +298,7 @@ MACRO_CONFIG_INT(KxBafSilent, kx_baf_silent, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_S
 MACRO_CONFIG_INT(KxBafTicks, kx_baf_ticks, 12, 2, 20, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Kinetix avoid prediction horizon")
 MACRO_CONFIG_INT(KxBafDebug, kx_baf_debug, 1, 0, 2, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Avoid log: 0 off, 1 changes/outcomes, 2 every evaluated tick")
 MACRO_CONFIG_INT(TcRocketAvoid, tc_rocket_avoid, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Prefer a verified close-range grenade save over automatic hook")
+MACRO_CONFIG_INT(TcRocketBoost, tc_rocket_boost, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Prefer faster safe rocket saves; never fire a boost without danger")
 MACRO_CONFIG_INT(TcRocketAvoidTicks, tc_rocket_avoid_ticks, 30, 20, 60, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Verify escape after the grenade explosion for this many ticks")
 MACRO_CONFIG_INT(TcRocketAvoidLead, tc_rocket_avoid_lead, 2, 1, 4, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Fire this many ticks before the latest verified rocket opportunity")
 MACRO_CONFIG_INT(TcRocketAvoidFlight, tc_rocket_avoid_flight, 4, 1, 8, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum ticks from shot to explosion; reject distant shots")

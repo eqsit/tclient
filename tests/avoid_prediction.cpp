@@ -110,6 +110,7 @@ protected:
 		m_Cfg.m_Direction = m_Cfg.m_Jump = false;
 		m_Cfg.m_Angles = 12;
 		m_Cfg.m_BudgetMs = 0; // deterministic call bound, independent of host speed
+		m_Cfg.m_Boost = std::getenv("TCLIENT_AVOID_TEST_BOOST") != nullptr;
 		// Optional native map export for the isolated client/server smoke test.
 		if(const char *pPath = std::getenv("TCLIENT_AVOID_EXPORT_MAP"))
 		{
@@ -1535,4 +1536,268 @@ TEST_F(CAvoidPrediction, HookBackupAvoidsReversePullWhenAVerticalRayCanSave)
 		Exercised = true;
 	}
 	EXPECT_TRUE(Exercised);
+}
+
+TEST_F(CAvoidPrediction, BoostNeverFiresOnSafeGround)
+{
+	for(int x = 0; x < CTestMap::WIDTH; x++)
+		m_Map.m_Tiles[16 * CTestMap::WIDTH + x].m_Index = TILE_AIR;
+	m_Collision.Init(&m_Layers);
+	m_Cfg.m_Boost = true;
+	for(int Direction : {-1, 0, 1})
+		for(int Vertical : {-1, 0, 1})
+		{
+			m_Input.m_Direction = Direction;
+			m_Cfg.m_BoostVertical = Vertical;
+			Spawn(530, 0);
+			CAvoidPlanner P;
+			const auto D = P.Decide(m_World, 0, m_Input, m_Cfg);
+			EXPECT_EQ(D.m_Base.m_Danger, 0);
+			EXPECT_EQ(D.m_Mode, CAvoidPlanner::EMode::SAFE);
+			EXPECT_EQ(D.m_Calls, 1);
+			EXPECT_FALSE(D.m_Plan.m_Rocket);
+			EXPECT_EQ(D.m_Plan.m_Input.m_Direction, Direction);
+		}
+}
+
+TEST_F(CAvoidPrediction, BoostLeavesEmergencyHookAndAvoidExactlyAsBefore)
+{
+	for(int Y : {480, 492, 504})
+		for(int Vy : {2, 8})
+		{
+			Spawn(Y, Vy, false);
+			CAvoidPlanner P;
+			m_Cfg.m_Boost = false;
+			const auto Old = P.Decide(m_World, 0, m_Input, m_Cfg);
+			m_Cfg.m_Boost = true;
+			const auto New = P.Decide(m_World, 0, m_Input, m_Cfg);
+			EXPECT_EQ(New.m_Mode, Old.m_Mode);
+			EXPECT_EQ(New.m_Calls, Old.m_Calls);
+			EXPECT_EQ(New.m_Result.m_Danger, Old.m_Result.m_Danger);
+			EXPECT_EQ(New.m_Plan.m_Delay, Old.m_Plan.m_Delay);
+			EXPECT_EQ(New.m_Plan.m_HookTicks, Old.m_Plan.m_HookTicks);
+			EXPECT_EQ(New.m_Plan.m_MoveTicks, Old.m_Plan.m_MoveTicks);
+			EXPECT_EQ(New.m_Plan.m_Input.m_Direction, Old.m_Plan.m_Input.m_Direction);
+			EXPECT_EQ(New.m_Plan.m_Input.m_Hook, Old.m_Plan.m_Input.m_Hook);
+			EXPECT_EQ(New.m_Plan.m_Input.m_TargetX, Old.m_Plan.m_Input.m_TargetX);
+			EXPECT_EQ(New.m_Plan.m_Input.m_TargetY, Old.m_Plan.m_Input.m_TargetY);
+		}
+}
+
+TEST_F(CAvoidPrediction, BoostRescueUsesThePressedDirectionAgainstInertia)
+{
+	m_Cfg.m_Boost = true;
+	for(int Direction : {-1, 1})
+	{
+		m_Input.m_Direction = Direction;
+		auto *pChar = Spawn(504, 8);
+		auto Core = pChar->GetCore();
+		Core.m_Vel.x = -Direction * 8;
+		pChar->SetCore(Core);
+		CAvoidPlanner P;
+		const auto D = P.Decide(m_World, 0, m_Input, m_Cfg);
+		ASSERT_EQ(D.m_Mode, CAvoidPlanner::EMode::ROCKET);
+		EXPECT_GT(D.m_Base.m_Danger, 0);
+		EXPECT_GT(D.m_BoostDirection.x * Direction, 0);
+		EXPECT_EQ(D.m_Plan.m_Input.m_Direction, Direction);
+		EXPECT_EQ(D.m_Result.m_Danger, 0);
+		EXPECT_LE(D.m_Plan.m_HookTicks, 0);
+	}
+}
+
+TEST_F(CAvoidPrediction, BoostAddsHorizontalSpeedToTheOrdinaryRocketSave)
+{
+	m_Input.m_Direction = 1;
+	auto *pChar = Spawn(504, 2);
+	auto Core = pChar->GetCore();
+	Core.m_Vel.x = 12;
+	pChar->SetCore(Core);
+	CAvoidPlanner P;
+	m_Cfg.m_Boost = false;
+	const auto Old = P.Decide(m_World, 0, m_Input, m_Cfg);
+	m_Cfg.m_Boost = true;
+	const auto New = P.Decide(m_World, 0, m_Input, m_Cfg);
+	ASSERT_EQ(Old.m_Mode, CAvoidPlanner::EMode::ROCKET);
+	ASSERT_EQ(New.m_Mode, CAvoidPlanner::EMode::ROCKET);
+	EXPECT_EQ(New.m_Result.m_Danger, 0);
+	EXPECT_EQ(New.m_Plan.m_Input.m_Direction, Old.m_Plan.m_Input.m_Direction);
+	EXPECT_EQ(New.m_Plan.m_HookTicks, Old.m_Plan.m_HookTicks);
+	const int Horizon = std::max(Old.m_Result.m_BlastTick, New.m_Result.m_BlastTick) + 1;
+	const auto Before = P.Simulate(m_World, 0, m_Input, Old.m_Plan, Horizon, m_Cfg);
+	const auto After = P.Simulate(m_World, 0, m_Input, New.m_Plan, Horizon, m_Cfg);
+	EXPECT_GT(After.m_Vel.x, Before.m_Vel.x + 0.5f);
+	EXPECT_GT(New.m_BoostScore, 0.5f);
+	EXPECT_LE(New.m_Result.m_BlastTick, Old.m_Result.m_BlastTick);
+	for(int Direction : {-1, 0, 1})
+	{
+		auto Turn = m_Input;
+		Turn.m_Direction = Direction;
+		EXPECT_EQ(P.Simulate(m_World, 0, Turn, New.m_Plan, m_Cfg.m_RocketTicks, m_Cfg).m_Danger, 0);
+	}
+}
+
+TEST_F(CAvoidPrediction, BoostReleaseStillRescuesWhenTheServerMissesThePress)
+{
+	for(int Fire : {0, 62})
+	{
+		m_Input.m_Fire = Fire;
+		m_Input.m_Direction = 1;
+		auto *pChar = Spawn(504, 2);
+		auto Core = pChar->GetCore();
+		Core.m_Vel.x = 12;
+		pChar->SetCore(Core);
+		m_Cfg.m_Boost = true;
+		CAvoidPlanner P;
+		const auto D = P.Decide(m_World, 0, m_Input, m_Cfg);
+		ASSERT_EQ(D.m_Mode, CAvoidPlanner::EMode::ROCKET);
+		const auto Shot = CAvoidPlanner::InputAt(D.m_Plan, m_Input, 0);
+		const int Before = pChar->GetAttackTick();
+		// Server advances without receiving the press. Its next input has the
+		// even release counter, which still contains exactly that one press.
+		pChar->OnDirectInput(&m_Input);
+		m_World.m_GameTick++;
+		pChar->OnPredictedInput(&m_Input);
+		m_World.Tick();
+		auto Release = m_Input;
+		Release.m_Fire = (Shot.m_Fire + 1) & INPUT_STATE_MASK;
+		Release.m_TargetX = 1000;
+		Release.m_TargetY = 0;
+		CAvoidPlanner::PreserveBoostReleaseAim(Release, Shot);
+		int Attack = -1;
+		for(int t = 0; t < 35; t++)
+		{
+			pChar->OnDirectInput(&Release);
+			m_World.m_GameTick++;
+			pChar->OnPredictedInput(&Release);
+			m_World.Tick();
+			if(t == 0)
+			{
+				Attack = pChar->GetAttackTick();
+				ASSERT_GT(Attack, Before);
+			}
+			EXPECT_EQ(pChar->GetAttackTick(), Attack); // No second shot after reload.
+			if(t < 6)
+			{
+				EXPECT_EQ(pChar->m_FreezeTime, 0);
+			}
+		}
+	}
+}
+
+TEST_F(CAvoidPrediction, BoostAimDeliveryPreservesHookAndSubsequentManualInputs)
+{
+	CNetObj_PlayerInput Shot = m_Input;
+	Shot.m_Fire = 1;
+	Shot.m_TargetX = -300;
+	Shot.m_TargetY = 950;
+	for(int Hook : {0, 1})
+		for(int Fire : {2, 3, 4})
+		{
+			auto Input = m_Input;
+			Input.m_Hook = Hook;
+			Input.m_Fire = Fire;
+			Input.m_Direction = -1;
+			Input.m_Jump = 1;
+			Input.m_WantedWeapon = WEAPON_GUN + 1;
+			const auto Before = Input;
+			CAvoidPlanner::PreserveBoostReleaseAim(Input, Shot);
+			EXPECT_EQ(Input.m_Hook, Before.m_Hook);
+			EXPECT_EQ(Input.m_Fire, Before.m_Fire);
+			EXPECT_EQ(Input.m_Direction, Before.m_Direction);
+			EXPECT_EQ(Input.m_Jump, Before.m_Jump);
+			EXPECT_EQ(Input.m_WantedWeapon, Before.m_WantedWeapon);
+			if(Hook || Fire != 2)
+			{
+				EXPECT_EQ(Input.m_TargetX, Before.m_TargetX);
+				EXPECT_EQ(Input.m_TargetY, Before.m_TargetY);
+			}
+		}
+}
+
+TEST_F(CAvoidPrediction, VerticalRocketSavesBoostAwayFromFloorAndCeilingFreeze)
+{
+	for(int x = 0; x < CTestMap::WIDTH; x++)
+	{
+		m_Map.m_Tiles[16 * CTestMap::WIDTH + x].m_Index = TILE_AIR;
+		m_Map.m_Tiles[17 * CTestMap::WIDTH + x].m_Index = TILE_AIR;
+		m_Map.m_Tiles[10 * CTestMap::WIDTH + x].m_Index = TILE_FREEZE;
+		m_Map.m_Tiles[27 * CTestMap::WIDTH + x].m_Index = TILE_FREEZE;
+		m_Map.m_Tiles[28 * CTestMap::WIDTH + x].m_Index = TILE_SOLID;
+	}
+	m_Collision.Init(&m_Layers);
+	m_Cfg.m_Boost = true;
+	for(int Vertical : {-1, 1})
+	{
+		m_Cfg.m_BoostVertical = Vertical;
+		Spawn(Vertical < 0 ? 850 : 370, Vertical < 0 ? 4 : -8);
+		CAvoidPlanner P;
+		const auto D = P.Decide(m_World, 0, m_Input, m_Cfg);
+		ASSERT_EQ(D.m_Mode, CAvoidPlanner::EMode::ROCKET) << Vertical;
+		EXPECT_GT(D.m_Base.m_Danger, 0);
+		EXPECT_EQ(D.m_BoostDirection, vec2(0, Vertical));
+		EXPECT_LT(D.m_Plan.m_RocketAim.y * Vertical, 0);
+		EXPECT_EQ(D.m_Result.m_Danger, 0);
+		const auto After = P.Simulate(m_World, 0, m_Input, D.m_Plan, D.m_Result.m_BlastTick + 1, m_Cfg);
+		EXPECT_GT(After.m_Vel.y * Vertical, 0);
+	}
+}
+
+TEST_F(CAvoidPrediction, DiagonalBoostSaveCombinesHorizontalAndVerticalIntent)
+{
+	m_Cfg.m_Boost = true;
+	m_Cfg.m_BoostVertical = -1;
+	for(int Direction : {-1, 1})
+	{
+		m_Input.m_Direction = Direction;
+		auto *pChar = Spawn(504, 2);
+		auto Core = pChar->GetCore();
+		Core.m_Vel.x = Direction * 8;
+		pChar->SetCore(Core);
+		CAvoidPlanner P;
+		const auto D = P.Decide(m_World, 0, m_Input, m_Cfg);
+		ASSERT_EQ(D.m_Mode, CAvoidPlanner::EMode::ROCKET);
+		EXPECT_GT(D.m_BoostDirection.x * Direction, 0);
+		EXPECT_LT(D.m_BoostDirection.y, 0);
+		EXPECT_EQ(D.m_Plan.m_Input.m_Jump, 0);
+		EXPECT_EQ(D.m_Result.m_Danger, 0);
+		EXPECT_LE(D.m_Plan.m_HookTicks, 0);
+	}
+}
+
+TEST_F(CAvoidPrediction, BoostSavePreservesTheVerifiedRescueOnATightBudget)
+{
+	for(int Calls : {12, 24, 48})
+	{
+		m_Cfg.m_MaxCalls = Calls;
+		Spawn(504, 8);
+		CAvoidPlanner P;
+		m_Cfg.m_Boost = false;
+		const auto Old = P.Decide(m_World, 0, m_Input, m_Cfg);
+		m_Cfg.m_Boost = true;
+		const auto New = P.Decide(m_World, 0, m_Input, m_Cfg);
+		EXPECT_LE(New.m_Calls, Calls);
+		EXPECT_EQ(New.m_Mode, Old.m_Mode);
+		EXPECT_EQ(New.m_Result.m_Danger, Old.m_Result.m_Danger);
+	}
+}
+
+TEST_F(CAvoidPrediction, BoostLeavesWeaponSwitchPreparationExactlyAsBefore)
+{
+	auto *pChar = Spawn(504, 2);
+	pChar->SetActiveWeapon(WEAPON_GUN);
+	m_Input.m_WantedWeapon = WEAPON_GUN + 1;
+	m_Input.m_Direction = 1;
+	CAvoidPlanner P;
+	m_Cfg.m_Boost = false;
+	const auto Old = P.Decide(m_World, 0, m_Input, m_Cfg);
+	m_Cfg.m_Boost = true;
+	const auto New = P.Decide(m_World, 0, m_Input, m_Cfg);
+	ASSERT_TRUE(Old.m_Plan.m_Rocket);
+	ASSERT_GT(Old.m_Plan.m_SwitchTicks, 0);
+	EXPECT_EQ(New.m_Mode, Old.m_Mode);
+	EXPECT_EQ(New.m_Calls, Old.m_Calls);
+	EXPECT_EQ(New.m_Plan.m_RocketAim, Old.m_Plan.m_RocketAim);
+	EXPECT_EQ(New.m_Plan.m_SwitchTicks, Old.m_Plan.m_SwitchTicks);
+	EXPECT_EQ(New.m_Plan.m_Delay, Old.m_Plan.m_Delay);
+	EXPECT_EQ(New.m_BoostScore, 0);
 }
