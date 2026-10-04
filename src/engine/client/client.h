@@ -370,7 +370,6 @@ public:
 	void Restart() override;
 	void Quit() override;
 	void ResetSocket();
-	void ConfigureSocks5(); // TClient: sync the SOCKS5 proxy config to the net layer before (re)creating sockets
 
 	const char *PlayerName() const override;
 	const char *DummyName() override;

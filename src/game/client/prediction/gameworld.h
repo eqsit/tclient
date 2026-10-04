@@ -98,11 +98,8 @@ public:
 	void NetCharAdd(int ObjId, CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtended, int GameTeam, bool IsLocal);
 	void NetObjAdd(int ObjId, int ObjType, const void *pObjData, const CNetObj_EntityEx *pDataEx);
 	void NetObjEnd();
-	// OnlyCharacter: when >= 0, copy just that character (client id) and skip all others. The avoid
-	// freezes simulation used to copy every character and delete the rest again, which is pure heap
-	// churn on a populated server.
-	void CopyWorld(CGameWorld *pFrom, int OnlyCharacter = -1);
-	void CopyWorldClean(CGameWorld *pFrom); // TClient
+	void CopyWorld(CGameWorld *pFrom);
+	void CopyWorldClean(CGameWorld *pFrom, bool CopyEvents = true); // TClient
 	CEntity *FindMatch(int ObjId, int ObjType, const void *pObjData);
 	void Clear();
 
@@ -125,9 +122,11 @@ public:
 
 		int m_ExtraInfo;
 		bool m_Handled = false;
+		bool m_Confirmed = false;
+		int m_SourceOwner = -1;
 
-		CPredictedEvent(int EventId, vec2 Pos, int Id, int Tick, int ExtraInfo = -1) :
-			m_EventId(EventId), m_Pos(vec2((int)Pos.x, (int)Pos.y)), m_Id(Id), m_Tick(Tick), m_ExtraInfo(ExtraInfo)
+		CPredictedEvent(int EventId, vec2 Pos, int Id, int Tick, int ExtraInfo = -1, int SourceOwner = -1) :
+			m_EventId(EventId), m_Pos(vec2((int)Pos.x, (int)Pos.y)), m_Id(Id), m_Tick(Tick), m_ExtraInfo(ExtraInfo), m_SourceOwner(SourceOwner)
 		{
 		}
 	};
@@ -138,8 +137,8 @@ public:
 	bool CheckPredictedEventHandled(const CPredictedEvent &CheckEvent);
 	void PlayPredictedEvents(int Tick);
 
-	void CreatePredictedSound(vec2 Pos, int SoundId, int Id = -1);
-	void CreatePredictedExplosionEvent(vec2 Pos, int Id = -1);
+	void CreatePredictedSound(vec2 Pos, int SoundId, int Id = -1, int SourceOwner = -1);
+	void CreatePredictedExplosionEvent(vec2 Pos, int Id = -1, int SourceOwner = -1);
 	void CreatePredictedHammerHitEvent(vec2 Pos, int Id = -1);
 	void CreatePredictedDamageIndEvent(vec2 Pos, float Angle, int Amount, int Id = -1);
 

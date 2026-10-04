@@ -349,7 +349,7 @@ void CGameWorld::CreateExplosion(vec2 Pos, int Owner, int Weapon, bool NoDamage,
 	if(m_WorldConfig.m_IsDDRace && m_WorldConfig.m_PredictDDRace)
 	{
 		// vanilla has different projectile physics
-		CreatePredictedExplosionEvent(Pos, Id);
+		CreatePredictedExplosionEvent(Pos, Id, Owner);
 	}
 
 	// deal damage
@@ -626,7 +626,7 @@ void CGameWorld::NetObjEnd()
 	}
 }
 
-void CGameWorld::CopyWorldClean(CGameWorld *pFrom)
+void CGameWorld::CopyWorldClean(CGameWorld *pFrom, bool CopyEvents)
 {
 	if(pFrom == this || !pFrom)
 		return;
@@ -639,7 +639,10 @@ void CGameWorld::CopyWorldClean(CGameWorld *pFrom)
 	m_pMapBugs = pFrom->m_pMapBugs;
 	m_Teams = pFrom->m_Teams;
 	m_Core.m_vSwitchers = pFrom->m_Core.m_vSwitchers;
-	m_PredictedEvents = pFrom->m_PredictedEvents;
+	if(CopyEvents)
+		m_PredictedEvents = pFrom->m_PredictedEvents;
+	else
+		m_PredictedEvents.clear();
 	// delete the previous entities
 	Clear();
 	for(int i = 0; i < MAX_CLIENTS; i++)
@@ -675,7 +678,7 @@ void CGameWorld::CopyWorldClean(CGameWorld *pFrom)
 	}
 }
 
-void CGameWorld::CopyWorld(CGameWorld *pFrom, int OnlyCharacter)
+void CGameWorld::CopyWorld(CGameWorld *pFrom)
 {
 	if(pFrom == this || !pFrom)
 		return;
@@ -705,8 +708,6 @@ void CGameWorld::CopyWorld(CGameWorld *pFrom, int OnlyCharacter)
 	{
 		for(CEntity *pEnt = pFrom->FindLast(Type); pEnt; pEnt = pEnt->TypePrev())
 		{
-			if(Type == ENTTYPE_CHARACTER && OnlyCharacter >= 0 && ((CCharacter *)pEnt)->GetCid() != OnlyCharacter)
-				continue;
 			CEntity *pCopy = nullptr;
 			if(Type == ENTTYPE_PROJECTILE)
 				pCopy = new CProjectile(*((CProjectile *)pEnt));
@@ -838,8 +839,13 @@ void CGameWorld::CreatePredictedEvent(const CPredictedEvent &NewEvent)
 		m_PredictedEvents.begin(),
 		m_PredictedEvents.end(),
 		[NewEvent](const CPredictedEvent &Event) {
-			return Event.m_EventId == NewEvent.m_EventId && Event.m_ExtraInfo == NewEvent.m_ExtraInfo &&
-			       Event.m_Pos == NewEvent.m_Pos && Event.m_Id == NewEvent.m_Id && Event.m_Tick == NewEvent.m_Tick;
+			if(Event.m_EventId != NewEvent.m_EventId || Event.m_ExtraInfo != NewEvent.m_ExtraInfo)
+				return false;
+			// A grenade keeps its owner/start tick when snapshots correct the
+			// collision position or tick. Play its impact once across re-prediction.
+			if(NewEvent.m_SourceOwner >= 0 && NewEvent.m_Id >= 0)
+				return Event.m_SourceOwner == NewEvent.m_SourceOwner && Event.m_Id == NewEvent.m_Id;
+			return Event.m_Pos == NewEvent.m_Pos && Event.m_Id == NewEvent.m_Id && Event.m_Tick == NewEvent.m_Tick;
 		});
 
 	if(It == m_PredictedEvents.end())
@@ -856,7 +862,7 @@ bool CGameWorld::CheckPredictedEventHandled(const CPredictedEvent &CheckEvent)
 		m_PredictedEvents.begin(),
 		m_PredictedEvents.end(),
 		[CheckEvent](const CPredictedEvent &Event) {
-			return Event.m_Handled == true && Event.m_EventId == CheckEvent.m_EventId &&
+			return Event.m_Handled && !Event.m_Confirmed && Event.m_EventId == CheckEvent.m_EventId &&
 			       Event.m_Pos == CheckEvent.m_Pos && Event.m_Tick <= CheckEvent.m_Tick && Event.m_ExtraInfo == CheckEvent.m_ExtraInfo;
 		});
 
@@ -865,23 +871,24 @@ bool CGameWorld::CheckPredictedEventHandled(const CPredictedEvent &CheckEvent)
 		return false;
 	}
 
-	// remove the event after it has been confirmed played
-	m_PredictedEvents.erase(It);
+	// Keep the identity until normal expiry, otherwise prediction can replay
+	// this same projectile immediately after the server confirms its impact.
+	It->m_Confirmed = true;
 	return true;
 }
 
-void CGameWorld::CreatePredictedSound(vec2 Pos, int SoundId, int Id)
+void CGameWorld::CreatePredictedSound(vec2 Pos, int SoundId, int Id, int SourceOwner)
 {
 	if(!g_Config.m_SndEnable)
 		return;
 
-	CPredictedEvent Event(NETEVENTTYPE_SOUNDWORLD, Pos, Id, GameTick(), SoundId);
+	CPredictedEvent Event(NETEVENTTYPE_SOUNDWORLD, Pos, Id, GameTick(), SoundId, SourceOwner);
 	CreatePredictedEvent(Event);
 }
 
-void CGameWorld::CreatePredictedExplosionEvent(vec2 Pos, int Id)
+void CGameWorld::CreatePredictedExplosionEvent(vec2 Pos, int Id, int SourceOwner)
 {
-	CPredictedEvent Event(NETEVENTTYPE_EXPLOSION, Pos, Id, GameTick());
+	CPredictedEvent Event(NETEVENTTYPE_EXPLOSION, Pos, Id, GameTick(), -1, SourceOwner);
 	CreatePredictedEvent(Event);
 }
 

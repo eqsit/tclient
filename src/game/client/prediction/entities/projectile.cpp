@@ -34,6 +34,7 @@ CProjectile::CProjectile(
 	m_SoundImpact = SoundImpact;
 	m_StartTick = GameWorld()->GameTick();
 	m_Explosive = Explosive;
+	m_Bouncing = 0;
 
 	m_Layer = Layer;
 	m_Number = Number;
@@ -107,7 +108,7 @@ void CProjectile::Tick()
 			if(GameWorld()->m_WorldConfig.m_IsDDRace && GameWorld()->m_WorldConfig.m_PredictDDRace)
 			{
 				// vanilla has different projectile physics
-				GameWorld()->CreatePredictedSound(ColPos, m_SoundImpact, m_StartTick);
+				GameWorld()->CreatePredictedSound(ColPos, m_SoundImpact, m_StartTick, m_Owner);
 			}
 		}
 		else if(m_Freeze)
@@ -152,7 +153,7 @@ void CProjectile::Tick()
 				pOwnerChar = GameWorld()->GetCharacterById(m_Owner);
 
 			GameWorld()->CreateExplosion(ColPos, m_Owner, m_Type, m_Owner == -1, (!pOwnerChar ? -1 : pOwnerChar->Team()), CClientMask().set(), m_StartTick);
-			GameWorld()->CreatePredictedSound(ColPos, m_SoundImpact, m_StartTick);
+			GameWorld()->CreatePredictedSound(ColPos, m_SoundImpact, m_StartTick, m_Owner);
 		}
 		m_MarkedForDestroy = true;
 	}

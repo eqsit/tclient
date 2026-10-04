@@ -751,7 +751,6 @@ if(TARGET_OS STREQUAL "windows")
   list(APPEND PLATFORM_LIBS version.lib) # GetFileVersionInfoSizeW
   list(APPEND PLATFORM_LIBS ws2_32.lib) # Windows sockets
   list(APPEND PLATFORM_LIBS advapi32.lib) # Reg* and Crypt* functions
-  list(APPEND PLATFORM_LIBS crypt32.lib) # Cert* functions, used by the bundled OpenSSL crypto
   list(APPEND PLATFORM_LIBS bcrypt.lib userenv.lib) # for Rust (https://github.com/rust-lang/rust/issues/91974)
   list(APPEND PLATFORM_LIBS ole32.lib) # CoInitialize(Ex)
   list(APPEND PLATFORM_LIBS shell32.lib)
@@ -2352,8 +2351,6 @@ set_src(GAME_SHARED GLOB src/game
   prng.cpp
   prng.h
   race_state.h
-  rocket_save.cpp
-  rocket_save.h
   team_state.h
   teamscore.cpp
   teamscore.h
@@ -2668,6 +2665,8 @@ if(CLIENT)
     lineinput.h
     pickup_data.cpp
     pickup_data.h
+    prediction/avoid_planner.cpp
+    prediction/avoid_planner.h
     prediction/entities/character.cpp
     prediction/entities/character.h
     prediction/entities/door.cpp
@@ -3263,6 +3262,34 @@ add_custom_command(OUTPUT ${PROJECT_BINARY_DIR}/src/generated/checksum.cpp
 
 ########################################################################
 # TESTS
+
+if(CLIENT AND GTEST_FOUND)
+  add_executable(avoid_prediction_tests EXCLUDE_FROM_ALL
+    tests/avoid_prediction.cpp
+    src/generated/client_data.cpp
+    src/game/client/prediction/avoid_planner.cpp
+    src/game/client/prediction/entity.cpp
+    src/game/client/prediction/gameworld.cpp
+    src/game/client/prediction/entities/character.cpp
+    src/game/client/prediction/entities/door.cpp
+    src/game/client/prediction/entities/dragger.cpp
+    src/game/client/prediction/entities/laser.cpp
+    src/game/client/prediction/entities/pickup.cpp
+    src/game/client/prediction/entities/plasma.cpp
+    src/game/client/prediction/entities/projectile.cpp
+    src/game/client/laser_data.cpp
+    src/game/client/pickup_data.cpp
+    src/game/client/projectile_data.cpp
+    $<TARGET_OBJECTS:engine-shared>
+    $<TARGET_OBJECTS:game-shared>
+    $<TARGET_OBJECTS:rust-bridge-shared>
+    ${DEPS}
+  )
+  target_link_libraries(avoid_prediction_tests ${GTEST_LIBRARIES} gtest_main ${LIBS_CLIENT})
+  target_include_directories(avoid_prediction_tests SYSTEM PRIVATE ${GTEST_INCLUDE_DIRS})
+  list(APPEND TARGETS_OWN avoid_prediction_tests)
+  list(APPEND TARGETS_LINK avoid_prediction_tests)
+endif()
 ########################################################################
 
 if((GTEST_FOUND OR DOWNLOAD_GTEST) AND SERVER)

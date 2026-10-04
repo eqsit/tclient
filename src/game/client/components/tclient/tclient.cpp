@@ -399,47 +399,6 @@ void CTClient::ConAirRescue(IConsole::IResult *pResult, void *pUserData)
 	((CTClient *)pUserData)->AirRescue();
 }
 
-void CTClient::ConAvoidToggle(IConsole::IResult *pResult, void *pUserData)
-{
-	g_Config.m_KxBasicAvoidFreeze = g_Config.m_KxBasicAvoidFreeze ? 0 : 1;
-	((CTClient *)pUserData)->GameClient()->Echo(g_Config.m_KxBasicAvoidFreeze ? "Avoid: ON" : "Avoid: OFF");
-}
-
-void CTClient::ConBalancerToggle(IConsole::IResult *pResult, void *pUserData)
-{
-	g_Config.m_TcBalancer = g_Config.m_TcBalancer ? 0 : 1;
-	((CTClient *)pUserData)->GameClient()->Echo(g_Config.m_TcBalancer ? "Balancer: ON" : "Balancer: OFF");
-}
-
-void CTClient::ConWeaponSpinToggle(IConsole::IResult *pResult, void *pUserData)
-{
-	g_Config.m_TcWeaponSpin = g_Config.m_TcWeaponSpin ? 0 : 1;
-	((CTClient *)pUserData)->GameClient()->Echo(g_Config.m_TcWeaponSpin ? "Weapon spin: ON" : "Weapon spin: OFF");
-}
-
-void CTClient::ConAntiVoidRocketModeNext(IConsole::IResult *pResult, void *pUserData)
-{
-	g_Config.m_TcAntiVoidRocket = (g_Config.m_TcAntiVoidRocket + 1) % CControls::NUM_ANTI_VOID_ROCKET_MODES;
-	char aBuf[64];
-	str_format(aBuf, sizeof(aBuf), "Rocket anti-void: %s", CControls::AntiVoidRocketModeName(g_Config.m_TcAntiVoidRocket));
-	((CTClient *)pUserData)->GameClient()->Echo(aBuf);
-}
-
-void CTClient::ConWeaponSpinModeNext(IConsole::IResult *pResult, void *pUserData)
-{
-	static const char *s_apModeNames[CControls::NUM_WEAPON_SPIN_MODES] = {
-		"spin CW", "spin CCW", "pendulum", "random flicks", "jitter", "snap 8-dir", "random drift", "chaos"};
-	g_Config.m_TcWeaponSpinMode = (g_Config.m_TcWeaponSpinMode + 1) % CControls::NUM_WEAPON_SPIN_MODES;
-	char aBuf[64];
-	str_format(aBuf, sizeof(aBuf), "Weapon spin mode: %s", s_apModeNames[g_Config.m_TcWeaponSpinMode]);
-	((CTClient *)pUserData)->GameClient()->Echo(aBuf);
-}
-
-void CTClient::ConToggleMenu(IConsole::IResult *pResult, void *pUserData)
-{
-	((CTClient *)pUserData)->GameClient()->m_Menus.ToggleMyForkPopup();
-}
-
 void CTClient::ConCalc(IConsole::IResult *pResult, void *pUserData)
 {
 	int Error = 0;
@@ -454,39 +413,6 @@ void CTClient::OnConsoleInit()
 {
 	Console()->Register("calc", "r[expression]", CFGFLAG_CLIENT, ConCalc, this, "Evaluate an expression");
 	Console()->Register("airrescue", "", CFGFLAG_CLIENT, ConAirRescue, this, "Rescue to a nearby air tile");
-	Console()->Register("tc_avoid_toggle", "", CFGFLAG_CLIENT, ConAvoidToggle, this, "Toggle the Kinetix avoid on/off (bindable)");
-	Console()->Register("tc_balancer_toggle", "", CFGFLAG_CLIENT, ConBalancerToggle, this, "Toggle balancer on/off (bindable)");
-	// Announce hook aim on/off in chat whenever the value changes via console/bind (e.g. `toggle tc_hook_aim 0 1`),
-	// regardless of which command the key is bound to. Skipped on config load (only while in a game).
-	Console()->Chain(
-		"tc_hook_aim", [](IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData) {
-			const int Old = g_Config.m_TcHookAim;
-			pfnCallback(pResult, pCallbackUserData);
-			CTClient *pThis = (CTClient *)pUserData;
-			if(pResult->NumArguments() > 0 && g_Config.m_TcHookAim != Old && pThis->Client()->State() == IClient::STATE_ONLINE)
-				pThis->GameClient()->Echo(g_Config.m_TcHookAim ? "Hook aim: ON" : "Hook aim: OFF");
-		},
-		this);
-	// Same for the rocket anti-void: announce the mode in chat on any change (e.g.
-	// `tc_anti_void_rocket_mode_next`, or `tc_anti_void_rocket 2` for aggressive).
-	Console()->Chain(
-		"tc_anti_void_rocket", [](IConsole::IResult *pResult, void *pUserData, IConsole::FCommandCallback pfnCallback, void *pCallbackUserData) {
-			const int Old = g_Config.m_TcAntiVoidRocket;
-			pfnCallback(pResult, pCallbackUserData);
-			CTClient *pThis = (CTClient *)pUserData;
-			if(pResult->NumArguments() > 0 && g_Config.m_TcAntiVoidRocket != Old && pThis->Client()->State() == IClient::STATE_ONLINE)
-			{
-				char aBuf[64];
-				str_format(aBuf, sizeof(aBuf), "Rocket anti-void: %s", CControls::AntiVoidRocketModeName(g_Config.m_TcAntiVoidRocket));
-				pThis->GameClient()->Echo(aBuf);
-			}
-		},
-		this);
-	Console()->Register("tc_anti_void_rocket_mode_next", "", CFGFLAG_CLIENT, ConAntiVoidRocketModeNext, this, "Cycle the anti-void rocket mode: off -> normal -> aggressive (bindable)");
-	Console()->Register("tc_weapon_spin_toggle", "", CFGFLAG_CLIENT, ConWeaponSpinToggle, this, "Toggle the weapon spinner on/off (bindable)");
-	Console()->Register("tc_weapon_spin_mode_next", "", CFGFLAG_CLIENT, ConWeaponSpinModeNext, this, "Cycle to the next weapon spinner mode (bindable)");
-	Console()->Register("tc_toggle_menu", "", CFGFLAG_CLIENT, ConToggleMenu, this, "Toggle the cheat menu (F12)");
-	Console()->Register("tc_menu", "", CFGFLAG_CLIENT, ConToggleMenu, this, "Toggle the cheat menu (F12)");
 
 	Console()->Register("tc_random_player", "s[type]", CFGFLAG_CLIENT, ConRandomTee, this, "Randomize player color (0 = all, 1 = body, 2 = feet, 3 = skin, 4 = flag) example: 0011 = randomize skin and flag [number is position]");
 	Console()->Chain("tc_random_player", ConchainRandomColor, this);

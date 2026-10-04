@@ -35,14 +35,12 @@ CProjectile::CProjectile(
 	m_SoundImpact = SoundImpact;
 	m_StartTick = Server()->Tick();
 	m_Explosive = Explosive;
+	// Ordinary weapon shots never bounce. Map entities opt in explicitly.
+	m_Bouncing = 0;
 
 	m_Layer = Layer;
 	m_Number = Number;
 	m_Freeze = Freeze;
-	// Must default to 0; otherwise the field holds garbage from reused entity memory and a normal
-	// grenade can become "bouncing", which explodes on every collision without being destroyed —
-	// a grenade stuck against a wall then explodes once per tick (looks like 50 explosions/second).
-	m_Bouncing = 0;
 
 	m_InitDir = InitDir;
 	m_TuneZone = GameServer()->Collision()->IsTune(GameServer()->Collision()->GetMapIndex(m_Pos));

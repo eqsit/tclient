@@ -1216,41 +1216,11 @@ void CMenus::Render()
 
 void CMenus::RenderPopupFullscreen(CUIRect Screen)
 {
-	if(m_Popup == POPUP_MYFORK)
+	if(m_Popup == POPUP_AVOID)
 	{
-		Screen.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.65f), IGraphics::CORNER_NONE, 0.0f);
-
-		CUIRect Box, Header, Title, CloseButton;
-		Box = Screen;
-		Box.VMargin(20.0f, &Box);
-		Box.HMargin(15.0f, &Box);
-		Box.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.75f), IGraphics::CORNER_ALL, 12.0f);
-
-		Box.Margin(12.0f, &Box);
-
-		// Header bar with Title and Close button
-		Box.HSplitTop(24.0f, &Header, &Box);
-		Header.VSplitLeft(200.0f, &Title, &Header);
-		Header.VSplitRight(120.0f, &Header, &CloseButton);
-
-		TextRender()->TextColor(1.0f, 0.8f, 0.3f, 1.0f);
-		Ui()->DoLabel(&Title, "TClient+", 18.0f, TEXTALIGN_ML);
-		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
-
-		static CButtonContainer s_CloseButton;
-		if(DoButton_Menu(&s_CloseButton, Localize("Close"), 0, &CloseButton) || Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
-		{
-			m_Popup = POPUP_NONE;
-			if(Client()->State() == IClient::STATE_ONLINE)
-				SetActive(false);
-		}
-
-		Box.HSplitTop(8.0f, nullptr, &Box);
-
-		RenderSettingsMyFork(Box);
+		RenderAvoidMenu(Screen);
 		return;
 	}
-
 	char aBuf[1536];
 	const char *pTitle = "";
 	const char *pExtraText = "";
@@ -1350,20 +1320,10 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		pTitle = Localize("Save skin");
 		pExtraText = Localize("Are you sure you want to save your skin? If a skin with this name already exists, it will be replaced.");
 	}
-	else if(m_Popup == POPUP_PROXY)
-	{
-		pTitle = "Прокси";
-	}
 
 	CUIRect Box, Part;
 	Box = Screen;
-	if(m_Popup == POPUP_PROXY)
-	{
-		// TClient: the proxy popup has many fields, give it a roomier box.
-		Box.VMargin(60.0f, &Box);
-		Box.HMargin(30.0f, &Box);
-	}
-	else if(m_Popup != POPUP_FIRST_LAUNCH)
+	if(m_Popup != POPUP_FIRST_LAUNCH)
 	{
 		Box.Margin(150.0f, &Box);
 	}
@@ -1571,25 +1531,6 @@ void CMenus::RenderPopupFullscreen(CUIRect Screen)
 		static CButtonContainer s_Button;
 		if(DoButton_Menu(&s_Button, Localize("Ok"), 0, &Button) || Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER) || Activated)
 			m_Popup = POPUP_FIRST_LAUNCH;
-	}
-	else if(m_Popup == POPUP_PROXY)
-	{
-		CUIRect ButtonBar, CloseButton;
-		Box.HSplitBottom(20.0f, &Box, nullptr);
-		Box.HSplitBottom(24.0f, &Box, &ButtonBar);
-		Box.HSplitBottom(20.0f, &Box, nullptr);
-		Box.VMargin(40.0f, &Box);
-
-		// Same proxy manager widget used by the My Fork settings tab.
-		RenderProxyManager(Box);
-
-		ButtonBar.VMargin(120.0f, &CloseButton);
-		static CButtonContainer s_CloseButton;
-		if(DoButton_Menu(&s_CloseButton, Localize("Close"), 0, &CloseButton) || Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
-		{
-			m_ProxyEditing = -1;
-			m_Popup = POPUP_NONE;
-		}
 	}
 	else if(m_Popup == POPUP_RENAME_DEMO)
 	{
@@ -2830,32 +2771,6 @@ void CMenus::SetShowStart(bool ShowStart)
 void CMenus::ShowQuitPopup()
 {
 	m_Popup = POPUP_QUIT;
-}
-
-void CMenus::ShowProxyPopup()
-{
-	m_Popup = POPUP_PROXY;
-}
-
-void CMenus::ShowMyForkPopup()
-{
-	m_Popup = POPUP_MYFORK;
-	SetActive(true);
-}
-
-void CMenus::ToggleMyForkPopup()
-{
-	if(m_Popup == POPUP_MYFORK)
-	{
-		m_Popup = POPUP_NONE;
-		if(Client()->State() == IClient::STATE_ONLINE)
-			SetActive(false);
-	}
-	else
-	{
-		m_Popup = POPUP_MYFORK;
-		SetActive(true);
-	}
 }
 
 void CMenus::JoinTutorial()

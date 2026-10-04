@@ -125,7 +125,7 @@ void CGameClient::OnConsoleInit()
 					      &m_Binds,
 					      &m_Binds.m_SpecialBinds,
 					      &m_Controls,
-					      &m_AvoidFreeze, // TClient: Kinetix Basic Avoid Freeze
+					      &m_AvoidFreeze,
 					      &m_Camera,
 					      &m_Sounds,
 					      &m_Voting,
@@ -546,6 +546,8 @@ void CGameClient::OnDummySwap()
 	const int PrevDummyFire = m_DummyInput.m_Fire;
 	m_DummyInput = m_Controls.m_aInputData[!g_Config.m_ClDummy];
 	m_Controls.m_aInputData[g_Config.m_ClDummy].m_Fire = PrevDummyFire;
+	m_Controls.m_aInputFire[g_Config.m_ClDummy] = PrevDummyFire;
+	m_AvoidFreeze.OnReset();
 	m_IsDummySwapping = 1;
 }
 
@@ -1451,10 +1453,11 @@ void CGameClient::ProcessEvents()
 			const CNetEvent_Explosion *pEvent = (const CNetEvent_Explosion *)Item.m_pData;
 
 			vec2 ExplosionPos = vec2(pEvent->m_X, pEvent->m_Y);
-			if(!m_PredictedWorld.CheckPredictedEventHandled(CGameWorld::CPredictedEvent(Item.m_Type, ExplosionPos, -1, Client()->GameTick(g_Config.m_ClDummy))))
-			{
+			const bool Predicted = m_PredictedWorld.CheckPredictedEventHandled(CGameWorld::CPredictedEvent(Item.m_Type, ExplosionPos, -1, Client()->GameTick(g_Config.m_ClDummy)));
+			if(g_Config.m_KxBafDebug >= 2)
+				log_info("avoid", "[SERVER-EXPLOSION] tick=%d pos=(%d,%d) predicted=%d", Client()->GameTick(g_Config.m_ClDummy), pEvent->m_X, pEvent->m_Y, Predicted);
+			if(!Predicted)
 				m_Effects.Explosion(ExplosionPos, Alpha);
-			}
 		}
 		else if(Item.m_Type == NETEVENTTYPE_HAMMERHIT)
 		{
@@ -2677,14 +2680,14 @@ void CGameClient::OnPredict()
 	// predict
 
 	int FastInputTicks = 0;
-	if(FastInputEnabled())
+	if(g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze)
 		FastInputTicks = (g_Config.m_TcFastInputAmount + 19) / 20;
 
 	int FinalTickRegular = Client()->PredGameTick(g_Config.m_ClDummy); // The vanilla final tick disregarding fast input
 
 	int FinalTickSelf = FinalTickRegular + FastInputTicks; // the final tick for just our local tee
 	int FinalTickOthers = FinalTickSelf; // the final tick for all other tees
-	if(FastInputEnabled() && !g_Config.m_TcFastInputOthers)
+	if((g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze) && !g_Config.m_TcFastInputOthers)
 		FinalTickOthers = FinalTickSelf - FastInputTicks;
 
 	int LocalTee = g_Config.m_ClDummy ^ m_IsDummySwapping;
@@ -2728,7 +2731,7 @@ void CGameClient::OnPredict()
 		CNetObj_PlayerInput DummyFastInput{};
 		bool DummyFirst = pInputData && pDummyInputData && pDummyChar->GetCid() < pLocalChar->GetCid();
 
-		if(FastInputEnabled() && Tick > FinalTickRegular)
+		if((g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze) && Tick > FinalTickRegular)
 		{
 			pInputData = &m_Controls.m_aFastInput[LocalTee];
 			if(GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
@@ -3850,7 +3853,9 @@ void CGameClient::UpdatePrediction()
 	m_GameWorld.m_WorldConfig.m_PredictDDRace = m_GameInfo.m_PredictDDRace;
 	m_GameWorld.m_WorldConfig.m_PredictTiles = m_GameInfo.m_PredictDDRace && m_GameInfo.m_PredictDDRaceTiles;
 	m_GameWorld.m_WorldConfig.m_PredictFreeze = g_Config.m_ClPredictFreeze;
-	m_GameWorld.m_WorldConfig.m_PredictWeapons = AntiPingWeapons();
+	// Avoid must see its own grenade immediately, even when visual antiping
+	// is disabled; otherwise it plans a second rescue from a missing blast.
+	m_GameWorld.m_WorldConfig.m_PredictWeapons = AntiPingWeapons() || g_Config.m_KxBasicAvoidFreeze;
 	m_GameWorld.m_WorldConfig.m_BugDDRaceInput = m_GameInfo.m_BugDDRaceInput;
 	m_GameWorld.m_WorldConfig.m_NoWeakHookAndBounce = m_GameInfo.m_NoWeakHookAndBounce;
 	m_GameWorld.m_WorldConfig.m_PredictEvents = m_GameInfo.m_PredictEvents;
@@ -4152,7 +4157,7 @@ void CGameClient::UpdateRenderedCharacters()
 
 			if(g_Config.m_TcRemoveAnti)
 				Pos = GetFreezePos(i);
-			else if(FastInputEnabled() && (i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy])))
+			else if((g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze) && (i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy])))
 				Pos = GetFastInputPos(i);
 
 			if(i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy]))
@@ -4179,7 +4184,7 @@ void CGameClient::UpdateRenderedCharacters()
 
 				if(g_Config.m_TcRemoveAnti && m_pClient->m_IsLocalFrozen)
 					Pos = GetFreezePos(i);
-				else if(FastInputEnabled() && g_Config.m_TcFastInputOthers && !g_Config.m_TcAntiPingImproved)
+				else if((g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze) && g_Config.m_TcFastInputOthers && !g_Config.m_TcAntiPingImproved)
 					Pos = GetFastInputPos(i);
 
 				if(g_Config.m_TcShowOthersGhosts && g_Config.m_TcSwapGhosts && !(m_aClients[i].m_FreezeEnd > 0 && g_Config.m_TcHideFrozenGhosts))
@@ -4217,6 +4222,8 @@ void CGameClient::HandlePredictedEvents(const int Tick)
 			else if(EventsIterator->m_EventId == NETEVENTTYPE_EXPLOSION)
 			{
 				m_Effects.Explosion(EventsIterator->m_Pos, Alpha);
+				if(g_Config.m_KxBafDebug >= 2)
+					log_info("avoid", "[PREDICTED-EXPLOSION] tick=%d owner=%d shot=%d pos=(%.0f,%.0f)", EventsIterator->m_Tick, EventsIterator->m_SourceOwner, EventsIterator->m_Id, EventsIterator->m_Pos.x, EventsIterator->m_Pos.y);
 			}
 			else if(EventsIterator->m_EventId == NETEVENTTYPE_HAMMERHIT)
 			{
@@ -4329,7 +4336,7 @@ void CGameClient::DetectStrongHook()
 
 vec2 CGameClient::GetSmoothPos(int ClientId)
 {
-	const int FastInputTicks = FastInputEnabled() ? (g_Config.m_TcFastInputAmount + 19) / 20 : 0;
+	const int FastInputTicks = (g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze) ? (g_Config.m_TcFastInputAmount + 19) / 20 : 0;
 	vec2 Pos = mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, Client()->PredIntraGameTick(g_Config.m_ClDummy));
 	int64_t Now = time_get();
 	for(int i = 0; i < 2; i++)
@@ -4434,12 +4441,12 @@ vec2 CGameClient::GetFreezePos(int ClientId)
 	FastInputTicks += CarryOverTicks;
 
 	const bool IsLocal = ClientId == m_Snap.m_LocalClientId || (PredictDummy() && ClientId == m_aLocalIds[!g_Config.m_ClDummy]);
-	if(IsLocal && FastInputEnabled())
+	if(IsLocal && (g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze))
 	{
 		SmoothTick += FastInputTicks;
 		SmoothIntra = FinalIntra;
 	}
-	else if(!IsLocal && g_Config.m_TcFastInputOthers && FastInputEnabled())
+	else if(!IsLocal && g_Config.m_TcFastInputOthers && (g_Config.m_TcFastInput && !g_Config.m_KxBasicAvoidFreeze))
 	{
 		SmoothTick += FastInputTicks;
 		SmoothIntra = FinalIntra;
@@ -5329,6 +5336,7 @@ void CGameClient::DummyResetInput()
 	m_Controls.ResetInput(!g_Config.m_ClDummy);
 	m_Controls.m_aInputData[!g_Config.m_ClDummy].m_Hook = 0;
 	m_Controls.m_aInputData[!g_Config.m_ClDummy].m_Fire = m_DummyInput.m_Fire;
+	m_Controls.m_aInputFire[!g_Config.m_ClDummy] = m_DummyInput.m_Fire;
 
 	m_DummyInput = m_Controls.m_aInputData[!g_Config.m_ClDummy];
 }
