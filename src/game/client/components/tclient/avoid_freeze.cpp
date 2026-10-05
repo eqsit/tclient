@@ -52,7 +52,7 @@ void CAvoidFreeze::ConStatus(IConsole::IResult *pResult, void *pUserData)
 {
 	auto *pSelf = static_cast<CAvoidFreeze *>(pUserData);
 	const auto &S = pSelf->m_aState[g_Config.m_ClDummy];
-	log_info("avoid", "[STATUS] version=kog-kinetix-12-hook-priority-local enabled=%d rocket=%d hook=%d horizon=%d rocket_horizon=%d lead=%d mode=%s tick=%d sims=%d sim_ticks=%d debug=%d boost=%d auto_rehook=%d",
+	log_info("avoid", "[STATUS] version=kog-kinetix-13-hook-fallback-local enabled=%d rocket=%d hook=%d horizon=%d rocket_horizon=%d lead=%d mode=%s tick=%d sims=%d sim_ticks=%d debug=%d boost=%d auto_rehook=%d",
 		g_Config.m_KxBasicAvoidFreeze, g_Config.m_TcRocketAvoid, g_Config.m_KxBafHook, g_Config.m_KxBafTicks,
 		g_Config.m_TcRocketAvoidTicks, g_Config.m_TcRocketAvoidLead, CAvoidPlanner::ModeName(S.m_Decision.m_Mode), S.m_Tick,
 		S.m_Decision.m_Calls, S.m_Decision.m_SimTicks, g_Config.m_KxBafDebug, g_Config.m_TcRocketBoost, g_Config.m_TcAvoidAutoRehook);
@@ -156,7 +156,7 @@ void CAvoidFreeze::ApplyOverride()
 			CServerInfo Info;
 			Client()->GetServerInfo(&Info);
 			const auto *pTune = pGame->m_PredictedWorld.GetTuning(pLocal->GetOverriddenTuneZone());
-			log_info("avoid", "[SESSION] version=kog-kinetix-12-hook-priority-local dummy=%d local=%d server=%s map=%s type=%s zone=%d grenade_speed=%.3f curvature=%.3f explosion=%.3f hook_drag=%.3f",
+			log_info("avoid", "[SESSION] version=kog-kinetix-13-hook-fallback-local dummy=%d local=%d server=%s map=%s type=%s zone=%d grenade_speed=%.3f curvature=%.3f explosion=%.3f hook_drag=%.3f",
 				Dummy, LocalId, Info.m_aName, Info.m_aMap, Info.m_aGameType, pLocal->GetOverriddenTuneZone(), (float)pTune->m_GrenadeSpeed, (float)pTune->m_GrenadeCurvature, (float)pTune->m_ExplosionStrength, (float)pTune->m_HookDragAccel);
 		}
 	}

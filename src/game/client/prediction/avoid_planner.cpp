@@ -487,7 +487,20 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 		}
 	};
 	if(pPrevious && !pPrevious->m_Rocket && !Exhausted())
-		Consider(RefreshPrevious());
+	{
+		auto Previous = RefreshPrevious();
+		if(!Consider(Previous) && OwnHook && Config.m_Hook && Previous.m_HookTicks > 0 &&
+			!Previous.m_HookDelay && !Exhausted() &&
+			(pLocal->Core()->m_HookState == HOOK_FLYING || pLocal->Core()->m_HookState == HOOK_GRABBED))
+		{
+			// A short rescue pulse may stop being sufficient after the next
+			// native snapshot. Verify continuing our existing attachment before
+			// rocket searches can spend the remaining fallback budget.
+			Previous.m_HookTicks = Ticks;
+			Previous.m_MoveTicks = Ticks + 1;
+			Consider(Previous);
+		}
+	}
 	const bool CanRocket = Config.m_Rocket && pLocal->GetWeaponGot(WEAPON_GRENADE) && pLocal->GetWeaponAmmo(WEAPON_GRENADE) != 0 &&
 			       !pLocal->GetWeaponGot(WEAPON_NINJA) && pLocal->GetReloadTimer() <= (pLocal->GetActiveWeapon() == WEAPON_GRENADE ? 0 : 1);
 	const int RocketTicks = std::clamp(Config.m_RocketTicks, Ticks, 60);

@@ -2123,3 +2123,84 @@ TEST_F(CAvoidPrediction, SuppressedManualRehookDoesNotCutShortTheCloseEmergencyS
 		}
 	}
 }
+
+TEST_F(CAvoidPrediction, AiPFeedbackFinishesTheLoggedFastFallEmergencyHook)
+{
+	const char *pPath = std::getenv("TCLIENT_AVOID_AIP_MAP");
+	if(!pPath)
+		GTEST_SKIP() << "Set TCLIENT_AVOID_AIP_MAP";
+	auto pStorage = CreateLocalStorage();
+	auto pMap = CreateMap();
+	ASSERT_TRUE(pMap->Load(pStorage.get(), pPath, IStorage::TYPE_ABSOLUTE));
+	m_World.Clear();
+	m_Collision.Unload();
+	m_Layers.Init(pMap.get(), false);
+	m_Collision.Init(&m_Layers);
+	m_World.Init(&m_Collision, m_Tuning.data(), &m_Bugs);
+	m_Cfg.m_Ticks = 20;
+	m_Cfg.m_Direction = true;
+	m_Cfg.m_Jump = false;
+	m_Cfg.m_Angles = 24;
+	for(int Calls : {128, 166, 512})
+		for(bool Boost : {false, true})
+			for(bool AutoRehook : {false, true})
+			{
+				SCOPED_TRACE(::testing::Message() << "boost=" << Boost << " calls=" << Calls << " rehook=" << AutoRehook);
+				m_Cfg.m_MaxCalls = Calls;
+				m_Cfg.m_Boost = Boost;
+				m_Cfg.m_AutoRehook = AutoRehook;
+				m_Input = {};
+				m_Input.m_Direction = -1;
+				m_Input.m_TargetX = -39;
+				m_Input.m_TargetY = 114;
+				auto *pChar = Spawn(3263, 30.09f, true, 3230);
+				auto Core = pChar->GetCore();
+				Core.m_Vel.x = -5;
+				pChar->SetCore(Core);
+				m_World.m_GameTick = 17292;
+				CAvoidPlanner P;
+				CAvoidPlanner::SPlan Logged;
+				Logged.m_Input = m_Input;
+				Logged.m_Input.m_Hook = 1;
+				Logged.m_Input.m_TargetX = -830;
+				Logged.m_Input.m_TargetY = -558;
+				Logged.m_HookTicks = 8;
+				Logged.m_MoveTicks = 9;
+				// The packet chosen at tick 17293 passes its immediate rescue
+				// window, but needs further braking before the next freeze.
+				ASSERT_EQ(P.Simulate(m_World, 0, m_Input, Logged, 11, m_Cfg).m_Danger, 0);
+				ASSERT_GT(P.Simulate(m_World, 0, m_Input, Logged, 30, m_Cfg).m_Danger, 0);
+				auto Extended = Logged;
+				Extended.m_HookTicks = 20;
+				Extended.m_MoveTicks = 21;
+				ASSERT_EQ(P.Simulate(m_World, 0, m_Input, Extended, 30, m_Cfg).m_Danger, 0);
+				const auto First = CAvoidPlanner::InputAt(Logged, m_Input, 0);
+				pChar->OnDirectInput(&First);
+				m_World.m_GameTick++;
+				pChar->OnPredictedInput(&First);
+				m_World.Tick();
+				CAvoidPlanner::SFeedback Feedback;
+				Feedback.m_OwnHook = Feedback.m_HasPrevious = true;
+				Feedback.m_Previous = CAvoidPlanner::RemainingPlan(Logged, m_Input, 1);
+				std::ostringstream Trace;
+				for(int t = 1; t < 35; t++)
+				{
+					if(t >= 5)
+					{
+						m_Input.m_TargetX = -30;
+						m_Input.m_TargetY = 1;
+					}
+					const auto Step = P.Step(m_World, 0, m_Input, m_Cfg, Feedback);
+					Trace << "t=" << t << " pos=" << pChar->m_Pos.x << ',' << pChar->m_Pos.y
+					      << " mode=" << P.ModeName(Step.m_Decision.m_Mode) << " base=" << Step.m_Decision.m_Base.m_Danger
+					      << " result=" << Step.m_Decision.m_Result.m_Danger << " hook=" << Step.m_Input.m_Hook
+					      << " pulse=" << Step.m_Decision.m_Plan.m_HookTicks << " owned=" << Feedback.m_OwnHook << '\n';
+					EXPECT_LE(Step.m_Decision.m_Calls, Calls) << Trace.str();
+					pChar->OnDirectInput(&Step.m_Input);
+					m_World.m_GameTick++;
+					pChar->OnPredictedInput(&Step.m_Input);
+					m_World.Tick();
+					ASSERT_EQ(pChar->m_FreezeTime, 0) << Trace.str();
+				}
+			}
+}
