@@ -2999,6 +2999,7 @@ void CMenus::RenderAvoidMenu(CUIRect Screen)
 	Check(Left, "Direction correction", g_Config.m_KxBafDirection);
 	Check(Left, "Jump correction", g_Config.m_KxBafJump);
 	Check(Left, "Emergency hook (short pulses)", g_Config.m_KxBafHook);
+	Check(Left, "Auto rehook after interruption", g_Config.m_TcAvoidAutoRehook);
 	Check(Left, "Search hook aim", g_Config.m_KxBafAim);
 	Check(Left, "Silent aim", g_Config.m_KxBafSilent);
 	Slider(Left, "Hook angles", g_Config.m_KxBafAngles, 1, 72);

@@ -28,6 +28,7 @@ CAvoidPlanner::SConfig CAvoidFreeze::Config() const
 	C.m_Aim = g_Config.m_KxBafAim;
 	C.m_Rocket = g_Config.m_TcRocketAvoid;
 	C.m_Boost = g_Config.m_TcRocketBoost;
+	C.m_AutoRehook = g_Config.m_TcAvoidAutoRehook;
 	C.m_BoostVertical = m_aBoostDown[g_Config.m_ClDummy] - m_aBoostUp[g_Config.m_ClDummy];
 	C.m_Freeze = g_Config.m_KxBafAvoidFreeze;
 	C.m_Death = g_Config.m_KxBafAvoidDeath;
@@ -51,10 +52,10 @@ void CAvoidFreeze::ConStatus(IConsole::IResult *pResult, void *pUserData)
 {
 	auto *pSelf = static_cast<CAvoidFreeze *>(pUserData);
 	const auto &S = pSelf->m_aState[g_Config.m_ClDummy];
-	log_info("avoid", "[STATUS] version=kog-kinetix-10-boost-save-local enabled=%d rocket=%d hook=%d horizon=%d rocket_horizon=%d lead=%d mode=%s tick=%d sims=%d sim_ticks=%d debug=%d boost=%d",
+	log_info("avoid", "[STATUS] version=kog-kinetix-12-hook-priority-local enabled=%d rocket=%d hook=%d horizon=%d rocket_horizon=%d lead=%d mode=%s tick=%d sims=%d sim_ticks=%d debug=%d boost=%d auto_rehook=%d",
 		g_Config.m_KxBasicAvoidFreeze, g_Config.m_TcRocketAvoid, g_Config.m_KxBafHook, g_Config.m_KxBafTicks,
 		g_Config.m_TcRocketAvoidTicks, g_Config.m_TcRocketAvoidLead, CAvoidPlanner::ModeName(S.m_Decision.m_Mode), S.m_Tick,
-		S.m_Decision.m_Calls, S.m_Decision.m_SimTicks, g_Config.m_KxBafDebug, g_Config.m_TcRocketBoost);
+		S.m_Decision.m_Calls, S.m_Decision.m_SimTicks, g_Config.m_KxBafDebug, g_Config.m_TcRocketBoost, g_Config.m_TcAvoidAutoRehook);
 }
 
 void CAvoidFreeze::ConBoostUp(IConsole::IResult *pResult, void *pUserData)
@@ -155,7 +156,7 @@ void CAvoidFreeze::ApplyOverride()
 			CServerInfo Info;
 			Client()->GetServerInfo(&Info);
 			const auto *pTune = pGame->m_PredictedWorld.GetTuning(pLocal->GetOverriddenTuneZone());
-			log_info("avoid", "[SESSION] version=kog-kinetix-10-boost-save-local dummy=%d local=%d server=%s map=%s type=%s zone=%d grenade_speed=%.3f curvature=%.3f explosion=%.3f hook_drag=%.3f",
+			log_info("avoid", "[SESSION] version=kog-kinetix-12-hook-priority-local dummy=%d local=%d server=%s map=%s type=%s zone=%d grenade_speed=%.3f curvature=%.3f explosion=%.3f hook_drag=%.3f",
 				Dummy, LocalId, Info.m_aName, Info.m_aMap, Info.m_aGameType, pLocal->GetOverriddenTuneZone(), (float)pTune->m_GrenadeSpeed, (float)pTune->m_GrenadeCurvature, (float)pTune->m_ExplosionStrength, (float)pTune->m_HookDragAccel);
 		}
 	}
@@ -209,11 +210,17 @@ void CAvoidFreeze::ApplyOverride()
 		log_info("avoid", "[OUTCOME] tick=%d dummy=%d frozen=%d mode=%s since_shot=%d pos=(%.2f,%.2f) vel=(%.2f,%.2f)",
 			Tick, Dummy, Frozen, CAvoidPlanner::ModeName(S.m_Decision.m_Mode), Tick - S.m_FireTick, pLocal->m_Pos.x, pLocal->m_Pos.y, pLocal->Core()->m_Vel.x, pLocal->Core()->m_Vel.y);
 	S.m_Frozen = Frozen;
+	if(g_Config.m_TcAvoidAutoRehook || !Input.m_Hook)
+		S.m_Feedback.m_ManualHookSuppressed = false;
 	if(Frozen)
 	{
-		if(S.m_Feedback.m_OwnHook)
+		if(!g_Config.m_TcAvoidAutoRehook && Input.m_Hook && S.m_Feedback.m_OwnHook)
+			S.m_Feedback.m_ManualHookSuppressed = true;
+		if(S.m_Feedback.m_OwnHook || S.m_Feedback.m_ManualHookSuppressed)
 			Input.m_Hook = 0;
+		const bool Suppressed = S.m_Feedback.m_ManualHookSuppressed;
 		S.m_Feedback = {};
+		S.m_Feedback.m_ManualHookSuppressed = Suppressed;
 		return;
 	}
 	const CNetObj_PlayerInput Raw = Input;
@@ -233,6 +240,13 @@ void CAvoidFreeze::ApplyOverride()
 		}
 		Input = S.m_Output;
 		Input.m_PlayerFlags = Flags;
+		if(!g_Config.m_TcAvoidAutoRehook)
+		{
+			if(Raw.m_Hook && !Input.m_Hook)
+				S.m_Feedback.m_ManualHookSuppressed = true;
+			if(!S.m_Feedback.m_OwnHook && (!Raw.m_Hook || S.m_Feedback.m_ManualHookSuppressed))
+				Input.m_Hook = 0;
+		}
 		return;
 	}
 	const int64_t Start = time_get_impl();
@@ -311,6 +325,8 @@ void CAvoidFreeze::ApplyOverride()
 		if(Cfg.m_Boost && Decision.m_Plan.m_Rocket && !Decision.m_Plan.m_Delay)
 			log_info("avoid", "[BOOST] tick=%d intent=(%.3f,%.3f) gain=%.3f long_safe=%d", Tick,
 				Decision.m_BoostDirection.x, Decision.m_BoostDirection.y, Decision.m_BoostScore, Decision.m_BoostLongSafe);
+		if(Decision.m_HookCandidates)
+			log_info("avoid", "[HOOK-MOMENTUM] tick=%d candidates=%d speed_gain=%.3f", Tick, Decision.m_HookCandidates, Decision.m_HookSpeedGain);
 	}
 	if(g_Config.m_KxBafDebug && Ms > 5 && Tick - S.m_PerfLogTick >= SERVER_TICK_SPEED)
 	{

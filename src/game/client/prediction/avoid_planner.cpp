@@ -23,7 +23,7 @@ namespace
 	{
 		vec2 Intent = Core.m_Vel;
 		if(Input.m_Direction)
-			Intent.x = Input.m_Direction * std::max(8.0f, std::abs(Intent.x));
+			Intent = vec2(Input.m_Direction * std::max(8.0f, std::abs(Intent.x)), 0);
 		if(Vertical)
 			Intent.y = Vertical * std::max(8.0f, std::abs(Intent.y));
 		else if(Input.m_Jump && !(Core.m_Jumped & 1))
@@ -33,7 +33,7 @@ namespace
 
 	float TravelScore(const CAvoidPlanner::SProbe &Probe, vec2 Start, vec2 Direction, int Ticks)
 	{
-		return dot(Probe.m_Pos - Start, Direction) / std::max(1, Ticks) + 0.5f * dot(Probe.m_Vel, Direction);
+		return dot(Probe.m_Vel, Direction) + 0.05f * dot(Probe.m_Pos - Start, Direction) / std::max(1, Ticks);
 	}
 }
 
@@ -395,6 +395,7 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 		vec2 m_Aim;
 		int m_Delay;
 		float m_Cost;
+		float m_Distance;
 	};
 	std::vector<SHookRay> Rays;
 	if(Config.m_Hook)
@@ -416,7 +417,7 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 			if(!KeepingHook && Tile != TILE_SOLID && Tile != TILE_TELEINHOOK && !World.IntersectCharacter(pLocal->m_Pos, pLocal->m_Pos + Aim * Reach, 0, Hit, pLocal, LocalId))
 				continue;
 			const int Delay = !KeepingOwnedHook && (OwnHook || Reaim) && pLocal->Core()->m_HookState != HOOK_IDLE ? 1 : 0;
-			Rays.push_back({Target, Delay, HookCost(Aim, distance(pLocal->m_Pos, Hit))});
+			Rays.push_back({Target, Delay, HookCost(Aim, distance(pLocal->m_Pos, Hit)), distance(pLocal->m_Pos, Hit)});
 		}
 	for(const auto &Move : Moves)
 	{
@@ -490,6 +491,117 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 	const bool CanRocket = Config.m_Rocket && pLocal->GetWeaponGot(WEAPON_GRENADE) && pLocal->GetWeaponAmmo(WEAPON_GRENADE) != 0 &&
 			       !pLocal->GetWeaponGot(WEAPON_NINJA) && pLocal->GetReloadTimer() <= (pLocal->GetActiveWeapon() == WEAPON_GRENADE ? 0 : 1);
 	const int RocketTicks = std::clamp(Config.m_RocketTicks, Ticks, 60);
+	auto ImproveHook = [&]() {
+		if(!Config.m_Boost || Decision.m_Mode != EMode::HOOK)
+			return;
+		const vec2 Intent = BoostDirection(Current, *pLocal->Core(), Config.m_BoostVertical);
+		// Keep the established handling of vertical falls unless the player
+		// explicitly requests a vertical boost. Horizontal momentum and
+		// pressed movement keys define the preferred rescue direction.
+		if(length(Intent) < 0.5f || (std::abs(Intent.x) < 0.15f && !Config.m_BoostVertical))
+			return;
+		auto CanProbe = [&]() {
+			return m_Calls < std::max(1, Config.m_MaxCalls) &&
+			       (Config.m_BudgetMs <= 0 || (time_get_impl() - Start) * 1000.0 / time_freq() < Config.m_BudgetMs * 0.95);
+		};
+		if(!CanProbe())
+			return;
+		const auto Original = Decision.m_Plan;
+		const auto OriginalProbe = Decision.m_Result;
+		const auto OriginalLong = Simulate(World, LocalId, Current, Original, RocketTicks, Config);
+		const float MinimumScore = TravelScore(OriginalProbe, pLocal->m_Pos, Intent, RescueTicks) + 0.5f;
+		float BestScore = MinimumScore;
+		auto PullDirection = [&](vec2 Aim, int Delay) {
+			// An attached hook keeps its anchor while the tee passes it;
+			// the original launch angle no longer describes the actual pull.
+			if(!Delay && pLocal->Core()->m_HookState == HOOK_GRABBED)
+				return normalize(pLocal->Core()->m_HookPos - pLocal->m_Pos);
+			return normalize(Aim);
+		};
+		bool ForwardFound = dot(PullDirection(vec2(Original.m_Input.m_TargetX, Original.m_Input.m_TargetY), Original.m_HookDelay), Intent) >= -0.05f;
+		SProbe OriginalLate;
+		bool HaveLate = false;
+		auto NoEarlierDanger = [](const SProbe &Candidate, const SProbe &Baseline) {
+			return !Candidate.m_Danger || (Baseline.m_Danger && Candidate.m_Danger >= Baseline.m_Danger);
+		};
+		auto Improve = [&](SPlan Hook) {
+			if(!CanProbe())
+				return;
+			const bool Opposed = dot(PullDirection(vec2(Hook.m_Input.m_TargetX, Hook.m_Input.m_TargetY), Hook.m_HookDelay), Intent) < -0.05f;
+			if(ForwardFound && Opposed)
+				return;
+			Decision.m_HookCandidates++;
+			const auto Probe = Simulate(World, LocalId, Current, Hook, RescueTicks, Config);
+			const float Score = TravelScore(Probe, pLocal->m_Pos, Intent, RescueTicks);
+			if(Probe.m_Danger || Score <= (!Opposed && !ForwardFound ? MinimumScore : BestScore) || !CanProbe())
+				return;
+			const auto Long = Simulate(World, LocalId, Current, Hook, RocketTicks, Config);
+			if(!NoEarlierDanger(Long, OriginalLong) || !CanProbe())
+				return;
+			if(!HaveLate)
+			{
+				auto Late = Original;
+				Late.m_Delay = 1;
+				OriginalLate = Simulate(World, LocalId, Current, Late, RescueTicks + 1, Config);
+				HaveLate = true;
+			}
+			if(!CanProbe())
+				return;
+			auto Late = Hook;
+			Late.m_Delay = 1;
+			if(!NoEarlierDanger(Simulate(World, LocalId, Current, Late, RescueTicks + 1, Config), OriginalLate))
+				return;
+			BestScore = Score;
+			ForwardFound |= !Opposed;
+			Decision.m_Plan = Hook;
+			Decision.m_Result = Probe;
+			Decision.m_HookSpeedGain = dot(Probe.m_Vel - OriginalProbe.m_Vel, Intent);
+		};
+		// First preserve the existing attachment when counter-steering alone
+		// causes the loss of speed. The original safe hook remains the fallback.
+		if(Original.m_Input.m_Direction != Current.m_Direction)
+			for(int Pulse = Original.m_HookTicks; Pulse <= std::min(Ticks, Original.m_HookTicks + 3) && CanProbe(); Pulse++)
+			{
+				auto Hook = Original;
+				Hook.m_Input.m_Direction = Current.m_Direction;
+				Hook.m_HookTicks = Pulse;
+				Hook.m_MoveTicks = std::max(Original.m_MoveTicks, Hook.m_HookDelay + Pulse + 1);
+				Improve(Hook);
+			}
+		if(!Config.m_Aim)
+			return;
+		// Search alternate attachments in momentum order, rather than using
+		// the baseline's preference for pulling against velocity. Only native
+		// safety checks can replace the already verified emergency rescue.
+		auto Alternatives = Rays;
+		auto Rank = [&](const SHookRay &Ray) {
+			const float Alignment = dot(PullDirection(Ray.m_Aim, Ray.m_Delay), Intent);
+			return std::max(0.0f, -Alignment) * std::max(8.0f, length(Velocity)) - 2 * Alignment + Ray.m_Distance / 80;
+		};
+		std::stable_sort(Alternatives.begin(), Alternatives.end(), [&](const SHookRay &A, const SHookRay &B) { return Rank(A) < Rank(B); });
+		for(const auto &Ray : Alternatives)
+		{
+			if(!CanProbe())
+				break;
+			if(Ray.m_Aim == vec2(Original.m_Input.m_TargetX, Original.m_Input.m_TargetY))
+				continue;
+			int LastPulse = 0;
+			for(int Pulse : {1, 2, 4, 8, 12, Ticks})
+			{
+				if(Pulse > Ticks || Pulse <= LastPulse || !CanProbe())
+					continue;
+				LastPulse = Pulse;
+				auto Hook = Original;
+				Hook.m_Input.m_Direction = Current.m_Direction;
+				Hook.m_Input.m_TargetX = round_to_int(Ray.m_Aim.x);
+				Hook.m_Input.m_TargetY = round_to_int(Ray.m_Aim.y);
+				Hook.m_HookDelay = Ray.m_Delay;
+				Hook.m_HookTicks = Pulse;
+				Hook.m_MoveTicks = Hook.m_HookDelay + Pulse + 1;
+				Improve(Hook);
+			}
+		}
+	};
 	int SwitchTicks = 1;
 	if(CanRocket && !pLocal->GetReloadTimer() && !Exhausted())
 	{
@@ -666,27 +778,65 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 			if(length(Intent) > 0.5f)
 			{
 				const auto OriginalLong = Simulate(World, LocalId, Current, Original, RocketTicks, Config);
-				const int ScoreTicks = OriginalLong.m_Danger ? OriginalProbe.m_Survival : RocketTicks;
-				const float BaseScore = TravelScore(OriginalLong.m_Danger ? OriginalProbe : OriginalLong, pLocal->m_Pos, Intent, ScoreTicks);
-				float BestScore = BaseScore + 0.5f;
+				const int FlightTicks = std::clamp(Config.m_MaxFlight, 1, 8);
+				std::vector<SProbe> OriginalEarly(FlightTicks + 2);
+				std::vector<bool> Scored(FlightTicks + 2, false);
+				std::vector<SProbe> OriginalTurns;
+				if(OriginalLong.m_Danger)
+					for(int Dir : {-1, 0, 1})
+					{
+						if(Exhausted())
+							return Finish();
+						auto Turn = Current;
+						Turn.m_Direction = Dir;
+						OriginalTurns.push_back(Simulate(World, LocalId, Turn, Original, RocketTicks, Config));
+					}
+				float BestGain = 0.25f;
+				float BestAngle = std::atan2(Original.m_RocketAim.y, Original.m_RocketAim.x);
 				const float Opposite = std::atan2(-Intent.y, -Intent.x);
 				const int Samples = std::clamp(Config.m_RocketAngles, 8, 96);
-				for(int a = 0; a < Samples && !Exhausted(); a++)
-				{
+				auto ImproveAim = [&](float BoostAngle) {
+					if(Exhausted())
+						return;
 					auto Shot = Original;
-					const int Index = (a + 1) / 2 * (a % 2 ? 1 : -1);
-					const float BoostAngle = Opposite + 2 * pi * Index / Samples;
 					Shot.m_RocketAim = vec2(std::cos(BoostAngle), std::sin(BoostAngle)) * 1000;
-					const auto Long = Simulate(World, LocalId, Current, Shot, RocketTicks, Config);
-					if(Long.m_ShotTick != Shot.m_SwitchTicks + 1 || !Long.m_BlastTick ||
-						Long.m_BlastTick - Long.m_ShotTick + 1 > Config.m_MaxFlight || Long.m_BlastTick > OriginalProbe.m_BlastTick ||
-						Long.m_Danger || Exhausted())
-						continue;
-					const auto Probe = ScoreTicks == RocketTicks ? Long : Simulate(World, LocalId, Current, Shot, ScoreTicks, Config);
-					const float Score = TravelScore(Probe, pLocal->m_Pos, Intent, ScoreTicks);
-					if(Probe.m_Danger || Score <= BestScore)
-						continue;
+					// Reject rays that cannot deliver a close blast before running
+					// the longer safety checks. Score the impulse just after impact,
+					// before later input/friction can hide a stronger rocket boost.
+					const auto Flight = Simulate(World, LocalId, Current, Shot, FlightTicks, Config);
+					if(Flight.m_Danger || Flight.m_ShotTick != 1 || !Flight.m_BlastTick || Exhausted())
+						return;
+					const int ScoreTicks = Flight.m_BlastTick + 1;
+					if(!Scored[ScoreTicks])
+					{
+						OriginalEarly[ScoreTicks] = Simulate(World, LocalId, Current, Original, ScoreTicks, Config);
+						Scored[ScoreTicks] = true;
+					}
+					if(Exhausted())
+						return;
+					const auto Early = Simulate(World, LocalId, Current, Shot, ScoreTicks, Config);
+					const float Gain = TravelScore(Early, pLocal->m_Pos, Intent, ScoreTicks) -
+							   TravelScore(OriginalEarly[ScoreTicks], pLocal->m_Pos, Intent, ScoreTicks);
+					if(Early.m_Danger || Gain <= BestGain || Exhausted())
+						return;
+					const int SafeTicks = std::min(RocketTicks, std::max(OriginalProbe.m_Survival, Flight.m_BlastTick + 6));
+					const auto Probe = Simulate(World, LocalId, Current, Shot, SafeTicks, Config);
+					if(Probe.m_Danger || Exhausted())
+						return;
+					const auto Long = SafeTicks == RocketTicks ? Probe : Simulate(World, LocalId, Current, Shot, RocketTicks, Config);
+					auto NoEarlierDanger = [](const SProbe &Candidate, const SProbe &Baseline) {
+						return !Candidate.m_Danger || (Baseline.m_Danger && Candidate.m_Danger >= Baseline.m_Danger);
+					};
+					if(Probe.m_Danger || !NoEarlierDanger(Long, OriginalLong) || Exhausted())
+						return;
+					// A late input must still deliver the same rescue, rather than
+					// relying on a perfect frame/packet at the freeze boundary.
+					auto Late = Shot;
+					Late.m_Delay = 1;
+					if(Simulate(World, LocalId, Current, Late, SafeTicks + 1, Config).m_Danger)
+						return;
 					bool Safe = true;
+					int TurnIndex = 0;
 					for(int Dir : {-1, 0, 1})
 					{
 						if(Exhausted())
@@ -696,16 +846,33 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 						}
 						auto Turn = Current;
 						Turn.m_Direction = Dir;
-						if(Simulate(World, LocalId, Turn, Shot, RocketTicks, Config).m_Danger)
+						const auto TurnProbe = Simulate(World, LocalId, Turn, Shot, RocketTicks, Config);
+						if(OriginalTurns.empty() ? TurnProbe.m_Danger != 0 :
+									   !NoEarlierDanger(TurnProbe, OriginalTurns[TurnIndex]) ||
+										   (TurnProbe.m_Danger && TurnProbe.m_Danger <= Flight.m_BlastTick + 3))
 							Safe = false;
+						TurnIndex++;
 					}
 					if(!Safe)
-						continue;
-					BestScore = Score;
+						return;
+					BestGain = Gain;
+					BestAngle = BoostAngle;
 					Decision.m_Plan = Shot;
 					Decision.m_Result = Probe;
-					Decision.m_BoostScore = Score - BaseScore;
+					Decision.m_BoostScore = Gain;
 					Decision.m_BoostLongSafe = !Long.m_Danger;
+				};
+				for(int a = 0; a < Samples && !Exhausted(); a++)
+				{
+					// Visit every quadrant before refining its neighbours.
+					const int Index = (a % 4) * (Samples / 4) + a / 4;
+					ImproveAim(Opposite + 2 * pi * Index / Samples);
+				}
+				const float RefineCenter = BestAngle;
+				for(int a = 1; a <= 12 && !Exhausted(); a++)
+				{
+					const int Offset = (a + 1) / 2 * (a % 2 ? 1 : -1);
+					ImproveAim(RefineCenter + 2 * pi / Samples * Offset / 6);
 				}
 			}
 		}
@@ -714,10 +881,22 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 	if(pPrevious && !pPrevious->m_Rocket)
 	{
 		const auto Previous = RefreshPrevious();
+		// With manual resumption disabled, releasing this emergency hook
+		// really leaves it off. Near freeze, finish the already verified
+		// rescue rather than relying on a held manual hook relaunching it.
+		if(!Config.m_AutoRehook && OwnHook && Config.m_Hook && Previous.m_HookTicks > 0 &&
+			Found && !Decision.m_Result.m_Danger && Decision.m_Base.m_Danger <= 6)
+		{
+			Decision.m_Mode = EMode::HOOK;
+			ShortenHook();
+			ImproveHook();
+			return Finish();
+		}
 		if(Config.m_Hook && Previous.m_CompleteHookLaunch && Previous.m_HookTicks > 0 && Found && !Decision.m_Result.m_Danger)
 		{
 			Decision.m_Mode = EMode::HOOK;
 			ShortenHook();
+			ImproveHook();
 			return Finish();
 		}
 		if(TryWait(Previous))
@@ -795,6 +974,7 @@ CAvoidPlanner::SDecision CAvoidPlanner::Decide(CGameWorld &World, int LocalId, c
 
 	if(Decision.m_Mode == EMode::MOVE || Decision.m_Mode == EMode::HOOK)
 		TryWait(Decision.m_Plan);
+	ImproveHook();
 	return Finish();
 }
 
@@ -802,16 +982,23 @@ CAvoidPlanner::SStep CAvoidPlanner::Step(CGameWorld &World, int LocalId, const C
 {
 	SStep Result;
 	const bool Owned = Feedback.m_OwnHook;
-	Result.m_Decision = Decide(World, LocalId, Current, Config, Feedback.m_HasPrevious ? &Feedback.m_Previous : nullptr, Owned);
+	if(Config.m_AutoRehook || !Current.m_Hook)
+		Feedback.m_ManualHookSuppressed = false;
+	auto Manual = Current;
+	if(Feedback.m_ManualHookSuppressed)
+		Manual.m_Hook = 0;
+	Result.m_Decision = Decide(World, LocalId, Manual, Config, Feedback.m_HasPrevious ? &Feedback.m_Previous : nullptr, Owned);
 	const auto Mode = Result.m_Decision.m_Mode;
 	const bool Apply = Mode == EMode::MOVE || Mode == EMode::HOOK || Mode == EMode::ROCKET || Mode == EMode::ROCKET_HOOK || Mode == EMode::BEST_EFFORT;
 	// Execute one tick, then reconsider the latest physical input and world.
 	// A forecast's duration is never a commitment to block later movement.
-	Result.m_Input = InputAt(Apply ? Result.m_Decision.m_Plan : ReturnControlPlan(Current, Owned), Current, 0);
+	Result.m_Input = InputAt(Apply ? Result.m_Decision.m_Plan : ReturnControlPlan(Manual, Owned), Manual, 0);
+	if(!Config.m_AutoRehook && Current.m_Hook && !Result.m_Input.m_Hook)
+		Feedback.m_ManualHookSuppressed = true;
 	const bool ForcedHook = Apply && Result.m_Decision.m_Plan.m_HookTicks > 0;
-	Feedback.m_OwnHook = Result.m_Input.m_Hook && (Owned || (ForcedHook && (Result.m_Input.m_Hook != Current.m_Hook ||
-										       Result.m_Input.m_TargetX != Current.m_TargetX || Result.m_Input.m_TargetY != Current.m_TargetY)));
-	Feedback.m_Previous = Apply ? RemainingPlan(Result.m_Decision.m_Plan, Current, 1) : Result.m_Decision.m_Plan;
+	Feedback.m_OwnHook = Result.m_Input.m_Hook && (Owned || (ForcedHook && (Result.m_Input.m_Hook != Manual.m_Hook ||
+										       Result.m_Input.m_TargetX != Manual.m_TargetX || Result.m_Input.m_TargetY != Manual.m_TargetY)));
+	Feedback.m_Previous = Apply ? RemainingPlan(Result.m_Decision.m_Plan, Manual, 1) : Result.m_Decision.m_Plan;
 	Feedback.m_Previous.m_CompleteHookLaunch = Apply && Result.m_Decision.m_Plan.m_HookTicks > 0 && !Result.m_Input.m_Hook;
 	Feedback.m_HasPrevious = Apply || Mode == EMode::WAIT;
 	return Result;

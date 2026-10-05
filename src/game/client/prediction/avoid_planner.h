@@ -31,6 +31,7 @@ public:
 		bool m_Aim = true;
 		bool m_Rocket = true;
 		bool m_Boost = false;
+		bool m_AutoRehook = true;
 		int m_BoostVertical = 0; // -1 up, +1 down, 0 follows jump/momentum
 		bool m_Freeze = true;
 		bool m_Death = true;
@@ -96,6 +97,8 @@ public:
 		vec2 m_BoostDirection{0, 0};
 		float m_BoostScore = 0;
 		bool m_BoostLongSafe = false;
+		int m_HookCandidates = 0;
+		float m_HookSpeedGain = 0;
 	};
 	struct SWeaponReturn
 	{
@@ -111,6 +114,7 @@ public:
 	{
 		bool m_OwnHook = false;
 		bool m_HasPrevious = false;
+		bool m_ManualHookSuppressed = false;
 		SPlan m_Previous;
 	};
 	struct SStep
